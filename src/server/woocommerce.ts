@@ -35,7 +35,6 @@ export function verifyWooCommerceWebhookSignature(
   secret?: string
 ): boolean {
   if (!signatureHeader || !secret) {
-    // If no secret configured yet, accept in developer/testing mode
     return true;
   }
 
@@ -47,13 +46,18 @@ export function verifyWooCommerceWebhookSignature(
 
     return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(signatureHeader));
   } catch (err) {
-    console.error('Webhook signature verification error:', err);
+    console.error('[WC Webhook] Signature verification error:', err);
     return false;
   }
 }
 
 /**
- * Map SOMS status to WooCommerce REST API status
+ * Map SOMS status to WooCommerce REST API status (Strict Logic)
+ * Pending   -> processing
+ * Approved  -> processing
+ * Hold      -> on-hold
+ * Cancelled -> cancelled
+ * Completed -> completed
  */
 export function mapSomsStatusToWcStatus(somsStatus: OrderStatus): string {
   switch (somsStatus) {
@@ -130,7 +134,6 @@ export async function syncOrderToWooCommerce(
   let internalNoteAdded = false;
 
   if (updates.status === 'completed') {
-    // Critical: SOMS "completed" triggers WooCommerce server-side Meta CAPI Purchase Dispatcher
     metaCapiTriggered = true;
   }
 
@@ -138,7 +141,7 @@ export async function syncOrderToWooCommerce(
     internalNoteAdded = true;
   }
 
-  // If live WooCommerce credentials are provided and valid URL
+  // Check if live WooCommerce credentials are provided
   if (
     settings.wc_store_url &&
     settings.wc_store_url.startsWith('http') &&
@@ -146,38 +149,57 @@ export async function syncOrderToWooCommerce(
     settings.wc_consumer_secret
   ) {
     try {
+      const baseUrl = settings.wc_store_url.replace(/\/\$/, '');
+      
+      // Dual Authentication: Basic Auth Header + Query Parameters (LiteSpeed header stripping fix)
       const authHeader = 'Basic ' + Buffer.from(`${settings.wc_consumer_key}:${settings.wc_consumer_secret}`).toString('base64');
-      const url = `${settings.wc_store_url.replace(/\/$/, '')}/wp-json/wc/v3/orders/${wcOrderId}`;
+      const targetUrl = new URL(`${baseUrl}/wp-json/wc/v3/orders/${wcOrderId}`);
+      targetUrl.searchParams.set('consumer_key', settings.wc_consumer_key);
+      targetUrl.searchParams.set('consumer_secret', settings.wc_consumer_secret);
 
-      const res = await fetch(url, {
+      console.log(`[WC Sync] Sending PUT to WooCommerce: Order #${wcOrderId} -> Payload:`, JSON.stringify(wcPayload));
+
+      const res = await fetch(targetUrl.toString(), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: authHeader,
         },
         body: JSON.stringify(wcPayload),
-        signal: AbortSignal.timeout(4000), // ultra-fast zero-latency non-blocking timeout
+        signal: AbortSignal.timeout(10000), // 10s resilient timeout
       });
 
-      if (res.ok && internalNoteAdded) {
-        // Add order note for cancellation
-        const noteUrl = `${settings.wc_store_url.replace(/\/$/, '')}/wp-json/wc/v3/orders/${wcOrderId}/notes`;
-        await fetch(noteUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: authHeader,
-          },
-          body: JSON.stringify({
-            note: `[SOMS Cancelled] Reason: ${updates.cancelReasonText}`,
-            customer_note: false,
-          }),
-        }).catch(() => null);
+      const resBody = await res.text();
+
+      if (!res.ok) {
+        console.error(`[WC Sync Failed] HTTP ${res.status}:`, resBody);
+      } else {
+        console.log(`[WC Sync Success] Order #${wcOrderId} successfully updated in WooCommerce!`);
+
+        // If cancelled with a reason, add an internal note to the order
+        if (internalNoteAdded) {
+          const noteUrl = new URL(`${baseUrl}/wp-json/wc/v3/orders/${wcOrderId}/notes`);
+          noteUrl.searchParams.set('consumer_key', settings.wc_consumer_key);
+          noteUrl.searchParams.set('consumer_secret', settings.wc_consumer_secret);
+
+          await fetch(noteUrl.toString(), {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: authHeader,
+            },
+            body: JSON.stringify({
+              note: `[SOMS Cancelled] Reason: ${updates.cancelReasonText}`,
+              customer_note: false,
+            }),
+          }).catch(err => console.error('[WC Note Error]:', err));
+        }
       }
-    } catch {
-      // In decoupled architecture, external network failures do not block SOMS operations!
-      // System gracefully records synchronized locally and queues retry if offline.
+    } catch (err: any) {
+      console.error(`[WC Sync Exception] Failed to dispatch update for Order #${wcOrderId}:`, err.message || err);
     }
+  } else {
+    console.warn('[WC Sync Warning] WooCommerce credentials missing or invalid in SOMS Settings!');
   }
 
   // Update order sync timestamp
@@ -187,7 +209,7 @@ export async function syncOrderToWooCommerce(
 
   return {
     success: true,
-    message: `Synchronized #${wcOrderId} to WooCommerce (${updates.status ? `mapped to '${mapSomsStatusToWcStatus(updates.status)}'` : 'details updated'})`,
+    message: `Synchronized #${wcOrderId} to WooCommerce (${updates.status ? `mapped to '\${mapSomsStatusToWcStatus(updates.status)}'` : 'details updated'})`,
     metaCapiTriggered,
     internalNoteAdded,
   };
@@ -198,7 +220,6 @@ export async function syncOrderToWooCommerce(
  */
 export function ingestWooCommerceOrder(payload: WCOrderPayload): Order {
   const db = getDb();
-  // STRICT: WooCommerce Order ID directly used as primary key
   const wcOrderId = payload.id;
 
   const existing = db.orders.find(o => o.id === wcOrderId);
@@ -225,14 +246,14 @@ export function ingestWooCommerceOrder(payload: WCOrderPayload): Order {
   const totalAmount = Number(payload.total) || items.reduce((acc, i) => acc + i.total, 0) + shippingFee;
 
   const newOrder: Order = {
-    id: wcOrderId, // STRICT WOOCOMMERCE ID
+    id: wcOrderId,
     customer_name: customerName,
     phone,
     address,
     items_json: items.length > 0 ? items : [{ product_id: 9999, name: 'Standard Product', quantity: 1, price: totalAmount - shippingFee, total: totalAmount - shippingFee }],
     shipping_fee: shippingFee,
     total_amount: totalAmount,
-    status: 'pending', // Fresh WooCommerce lead maps to SOMS "pending" awaiting moderator call
+    status: 'pending',
     cancel_reason_id: null,
     updated_by_id: null,
     createdAt: new Date().toISOString(),
@@ -250,7 +271,7 @@ export function ingestWooCommerceOrder(payload: WCOrderPayload): Order {
     user_id: null,
     user_name: 'WooCommerce Webhook',
     action_type: 'order_created',
-    description: `Order #${wcOrderId} ingested via WooCommerce order.created webhook. Initial status set to Pending (awaiting verification call).`,
+    description: `Order #${wcOrderId} ingested via WooCommerce order.created webhook. Initial status set to Pending.`,
     timestamp: new Date().toISOString(),
   });
 
