@@ -3,15 +3,23 @@ import { Order, OrderStatus, CancelReason } from '../types/index.ts';
 export const TOKEN_KEY = 'soms_token';
 
 export const getStoredToken = (): string | null => {
-  return localStorage.getItem(TOKEN_KEY);
+  return (
+    localStorage.getItem(TOKEN_KEY) ||
+    localStorage.getItem('token') ||
+    localStorage.getItem('auth_token')
+  );
 };
 
 export const setStoredToken = (token: string): void => {
   localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem('token', token);
+  localStorage.setItem('auth_token', token);
 };
 
 export const removeStoredToken = (): void => {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem('token');
+  localStorage.removeItem('auth_token');
 };
 
 const getAuthHeader = () => {
@@ -20,7 +28,7 @@ const getAuthHeader = () => {
 };
 
 export const api = {
-  // Dual-Signature Login: handles both api.login(email, password) AND api.login({ email, password })
+  // Dual-Signature Login with Auto-Token Persistence
   login: async (arg1: any, arg2?: string) => {
     let payload: { email: string; password: string } = { email: '', password: '' };
 
@@ -43,7 +51,16 @@ export const api = {
       const err = await res.json().catch(() => ({ error: 'Login failed' }));
       throw new Error(err.error || 'Login failed');
     }
-    return res.json();
+
+    const data = await res.json();
+    if (data?.token) {
+      setStoredToken(data.token);
+    }
+    return data;
+  },
+
+  logout: () => {
+    removeStoredToken();
   },
 
   getMe: async () => {
@@ -239,6 +256,32 @@ export const api = {
     return res.json();
   },
 
+  saveSettings: async (settings: any) => {
+    const res = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify(settings),
+    });
+    if (!res.ok) throw new Error('Failed to save settings');
+    return res.json();
+  },
+
+  // Handshake Connection Test (UI compatibility)
+  testWooCommerceConnection: async (settings?: any) => {
+    const res = await fetch('/api/woocommerce/test-connection', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify(settings || {}),
+    });
+    return res.json();
+  },
+
   testWcConnection: async (settings?: any) => {
     const res = await fetch('/api/woocommerce/test-connection', {
       method: 'POST',
@@ -248,6 +291,18 @@ export const api = {
       },
       body: JSON.stringify(settings || {}),
     });
+    return res.json();
+  },
+
+  simulateInboundOrder: async () => {
+    const res = await fetch('/api/webhooks/woocommerce/simulate-test', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+    });
+    if (!res.ok) throw new Error('Simulation failed');
     return res.json();
   },
 
