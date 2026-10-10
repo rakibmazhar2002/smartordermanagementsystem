@@ -187,7 +187,7 @@ app.post('/api/woocommerce/test-connection', authenticate, requireSuperAdmin, as
   }
 });
 
-// PULL ORDERS DIRECTLY FROM WOOCOMMERCE (ID, 24 Hours, or Custom Range)
+// PULL ORDERS DIRECTLY FROM WOOCOMMERCE
 app.post('/api/woocommerce/pull-orders', authenticate, async (req: Request, res: Response) => {
   try {
     const { order_id, hours, start_date, end_date } = req.body;
@@ -239,11 +239,10 @@ app.post('/api/webhooks/woocommerce/simulate-test', authenticate, requireSuperAd
   });
 });
 
-// 2-WAY INBOUND WOOCOMMERCE WEBHOOK (ORDER CREATED & ORDER UPDATED)
+// 2-WAY INBOUND WOOCOMMERCE WEBHOOK
 const handleWooCommerceWebhook = (req: Request, res: Response) => {
   const topic = req.headers['x-wc-webhook-topic'] as string | undefined;
 
-  // WooCommerce Webhook Ping Acknowledgement
   if (topic === 'action.woocommerce_webhook_ping' || (!req.body?.id && req.body?.webhook_id)) {
     return res.status(200).json({
       success: true,
@@ -251,7 +250,6 @@ const handleWooCommerceWebhook = (req: Request, res: Response) => {
     });
   }
 
-  // Signature check
   const signature = req.headers['x-wc-webhook-signature'] as string | undefined;
   const db = getDb();
   const secret = db.settings.wc_webhook_secret;
@@ -384,6 +382,7 @@ app.post('/api/users', authenticate, requireSuperAdmin, async (req: Request, res
   }
 });
 
+// ইউজার আপডেট এবং পাসওয়ার্ড রিসেট এন্ডপয়েন্ট
 app.put('/api/users/:id', authenticate, requireSuperAdmin, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -574,7 +573,6 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
   order.updated_by_id = user.id;
   order.updatedAt = new Date().toISOString();
 
-  // অ্যাক্টিভিটি লগ বিবরণ
   let logDescription = `Status changed from ${prevStatus.toUpperCase()} to ${status.toUpperCase()} by ${user.name}.`;
   if (status === 'cancelled') {
     logDescription = `Order #${rawId} Cancelled. Reason: "${cancelReasonText}". Appended internal note to WooCommerce.`;
@@ -707,7 +705,6 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
   for (const id of order_ids) {
     const order = db.orders.find(o => o.id === id);
     if (order) {
-      // বাল্ক আপডেটেও কঠোর রুলস প্রটেকশন
       const allowed = ALLOWED_TRANSITIONS[order.status] || [];
       if (!allowed.includes(status)) continue;
 
@@ -740,7 +737,7 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
   return res.json({ success: true, count: updatedCount });
 });
 
-// ANALYTICS DASHBOARD (Meta CAPI by Order Date & Cancellations by Modified Date)
+// ANALYTICS DASHBOARD
 app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: Response) => {
   const db = getDb();
   const range = (req.query.range as string) || 'today';
@@ -851,7 +848,6 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     };
   });
 
-  // রুট কজ ব্রেকডাউন (মডিফাইড ডেটের ক্যানসেলেশনের ভিত্তিতে)
   const cancelReasonsMap = new Map(db.cancelReasons.map(r => [r.id, r.reason_text]));
   const reasonCounts: Record<string, number> = {};
 
