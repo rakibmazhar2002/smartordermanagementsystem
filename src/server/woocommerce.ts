@@ -57,20 +57,23 @@ export function verifyWooCommerceWebhookSignature(
 
 /**
  * Map SOMS status to WooCommerce REST API status
+ * - Approved -> 'completed' (Meta CAPI Purchase Trigger)
+ * - Completed -> null (No effect on WooCommerce)
  */
-export function mapSomsStatusToWcStatus(somsStatus: OrderStatus): string {
+export function mapSomsStatusToWcStatus(somsStatus: OrderStatus): string | null {
   switch (somsStatus) {
     case 'pending': return 'processing';
-    case 'approved': return 'processing';
+    case 'approved': return 'completed'; // SOMS Approved = WooCommerce Completed (Meta CAPI Purchase Trigger)
     case 'hold': return 'on-hold';
     case 'cancelled': return 'cancelled';
-    case 'completed': return 'completed';
-    default: return 'processing';
+    case 'completed': return null;        // SOMS Completed = WooCommerce-এ কোনো পরিবর্তন যাবে না
+    default: return null;
   }
 }
 
 /**
  * Map WooCommerce Status back to SOMS status (2-Way Reverse Sync)
+ * - WooCommerce 'completed' -> SOMS 'approved'
  */
 export function mapWcStatusToSomsStatus(wcStatus: string, currentStatus?: OrderStatus): OrderStatus {
   const s = String(wcStatus || '').toLowerCase().trim();
@@ -82,7 +85,9 @@ export function mapWcStatusToSomsStatus(wcStatus: string, currentStatus?: OrderS
     case 'on-hold':
       return 'hold';
     case 'completed':
-      return 'completed';
+      // WooCommerce Completed আসলে SOMS-এ Approved হবে
+      // তবে SOMS-এ যদি আগে থেকেই ডেলিভারি Completed থাকে তবে সেটা অক্ষুণ্ণ থাকবে
+      return currentStatus === 'completed' ? 'completed' : 'approved';
     case 'cancelled':
     case 'failed':
     case 'refunded':
@@ -138,7 +143,10 @@ export async function syncOrderToWooCommerce(
   const wcPayload: Record<string, unknown> = {};
 
   if (updates.status) {
-    wcPayload.status = mapSomsStatusToWcStatus(updates.status);
+    const mappedStatus = mapSomsStatusToWcStatus(updates.status);
+    if (mappedStatus) {
+      wcPayload.status = mappedStatus;
+    }
   }
 
   if (updates.customer_name || updates.phone || updates.address) {
@@ -158,7 +166,8 @@ export async function syncOrderToWooCommerce(
   let internalNoteAdded = false;
   if (updates.status === 'cancelled' && updates.cancelReasonText) internalNoteAdded = true;
 
-  if (settings.wc_store_url && settings.wc_consumer_key && settings.wc_consumer_secret) {
+  // শুধুমাত্র পাঠানোর মতো কোনো ফিল্ড থাকলেই WooCommerce REST API কল হবে
+  if (Object.keys(wcPayload).length > 0 && settings.wc_store_url && settings.wc_consumer_key && settings.wc_consumer_secret) {
     try {
       const baseUrl = settings.wc_store_url.replace(/\/+\$/, '');
       const authHeader = 'Basic ' + Buffer.from(`${settings.wc_consumer_key}:${settings.wc_consumer_secret}`).toString('base64');
@@ -201,7 +210,12 @@ export async function syncOrderToWooCommerce(
   order.wc_last_synced_at = new Date().toISOString();
   saveDb();
 
-  return { success: true, message: `Synced #${wcOrderId}`, metaCapiTriggered: updates.status === 'completed', internalNoteAdded };
+  return {
+    success: true,
+    message: `Synced #${wcOrderId}`,
+    metaCapiTriggered: updates.status === 'approved', // Approved হলেই Meta CAPI Purchase হিসেবে চিহ্নিত হবে
+    internalNoteAdded
+  };
 }
 
 /**
@@ -232,12 +246,11 @@ export function ingestWooCommerceOrder(payload: any): Order {
   const shippingFee = Number(payload.shipping_total) || 80;
   const totalAmount = Number(payload.total) || items.reduce((acc, i) => acc + i.total, 0) + shippingFee;
 
-  // যদি অর্ডার আগে থেকেই SOMS-এ থাকে (Order Updated ঘটনায়)
+  // যদি অর্ডার আগে থেকেই SOMS-এ থাকে (Order Updated ঘটনায়)
   if (existing) {
     const oldStatus = existing.status;
     const newStatus = mapWcStatusToSomsStatus(payload.status, existing.status);
 
-    // WooCommerce থেকে আসা নতুন স্ট্যাটাস আপডেট করা হলো
     if (oldStatus !== newStatus) {
       existing.status = newStatus;
       db.activityLogs.unshift({
@@ -264,7 +277,7 @@ export function ingestWooCommerceOrder(payload: any): Order {
     return existing;
   }
 
-  // নতুন অর্ডার তৈরি
+  // নতুন অর্ডারের ক্ষেত্রে ইনিশিয়াল স্ট্যাটাস ম্যাপিং
   const initialStatus = mapWcStatusToSomsStatus(payload.status, 'pending');
 
   const newOrder: Order = {
