@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import { initDb, getDb, saveDb } from './src/server/db.ts';
@@ -34,6 +35,98 @@ app.use(express.urlencoded({ extended: true }));
 
 // Ensure DB is initialized
 await initDb();
+
+// মাস্টার পারসিস্টেন্ট ব্যাকআপ পাথ (গিট রিপোজিটরি ফোল্ডারের বাইরে সুরক্ষিত থাকবে)
+const MASTER_BACKUP_PATH = path.resolve(__dirname, '..', 'soms_master_backup.json');
+const LOCAL_BACKUP_PATH = path.resolve(__dirname, 'soms_master_backup.json');
+
+// ডেটাবেজ সেভের সাথে মাস্টার ব্যাকআপ সিংক হেল্পার
+function safeSaveDb() {
+  saveDb();
+  try {
+    const currentDb = getDb();
+    const serialized = JSON.stringify(currentDb, null, 2);
+    try {
+      fs.writeFileSync(MASTER_BACKUP_PATH, serialized, 'utf-8');
+    } catch {
+      fs.writeFileSync(LOCAL_BACKUP_PATH, serialized, 'utf-8');
+    }
+  } catch (err) {
+    console.error('[Backup Sync Error]:', err);
+  }
+}
+
+// অটো-রিস্টোর সিস্টেম (git pull দিলেও সমস্ত অর্ডার, সেটিংস ও ইউজার রিস্টোর হবে)
+const activeDb = getDb();
+let needsRestoration = false;
+
+let backupFileToUse: string | null = null;
+if (fs.existsSync(MASTER_BACKUP_PATH)) {
+  backupFileToUse = MASTER_BACKUP_PATH;
+} else if (fs.existsSync(LOCAL_BACKUP_PATH)) {
+  backupFileToUse = LOCAL_BACKUP_PATH;
+}
+
+if (backupFileToUse) {
+  try {
+    const backupData = JSON.parse(fs.readFileSync(backupFileToUse, 'utf-8'));
+
+    // ১. সেটিংস রিস্টোর
+    if (backupData.settings && (!activeDb.settings?.wc_store_url || activeDb.settings.wc_store_url.trim() === '')) {
+      activeDb.settings = { ...activeDb.settings, ...backupData.settings };
+      needsRestoration = true;
+    }
+
+    // ২. অর্ডার তালিকা রিস্টোর
+    if (Array.isArray(backupData.orders) && backupData.orders.length > 0 && activeDb.orders.length === 0) {
+      activeDb.orders = backupData.orders;
+      needsRestoration = true;
+    }
+
+    // ৩. মডারেটর ও স্টাফ একাউন্ট রিস্টোর
+    if (Array.isArray(backupData.users) && backupData.users.length > 1 && activeDb.users.length <= 1) {
+      activeDb.users = backupData.users;
+      needsRestoration = true;
+    }
+
+    // ৪. ক্যানসেল রিজন ও হিস্ট্রি লগ রিস্টোর
+    if (Array.isArray(backupData.cancelReasons) && activeDb.cancelReasons.length === 0) {
+      activeDb.cancelReasons = backupData.cancelReasons;
+      needsRestoration = true;
+    }
+    if (Array.isArray(backupData.activityLogs) && activeDb.activityLogs.length === 0) {
+      activeDb.activityLogs = backupData.activityLogs;
+      needsRestoration = true;
+    }
+  } catch (err) {
+    console.error('[Auto-Restore Warning]:', err);
+  }
+}
+
+// .env ফলব্যাক রিস্টোর
+if (!activeDb.settings?.wc_store_url && process.env.WC_STORE_URL) {
+  activeDb.settings.wc_store_url = process.env.WC_STORE_URL.trim();
+  needsRestoration = true;
+}
+if (!activeDb.settings?.wc_consumer_key && process.env.WC_CONSUMER_KEY) {
+  activeDb.settings.wc_consumer_key = process.env.WC_CONSUMER_KEY.trim();
+  needsRestoration = true;
+}
+if (!activeDb.settings?.wc_consumer_secret && process.env.WC_CONSUMER_SECRET) {
+  activeDb.settings.wc_consumer_secret = process.env.WC_CONSUMER_SECRET.trim();
+  needsRestoration = true;
+}
+if (!activeDb.settings?.wc_webhook_secret && process.env.WC_WEBHOOK_SECRET) {
+  activeDb.settings.wc_webhook_secret = process.env.WC_WEBHOOK_SECRET.trim();
+  needsRestoration = true;
+}
+
+if (needsRestoration) {
+  safeSaveDb();
+  console.log('[SOMS Safety]: All orders, staff accounts, and WooCommerce credentials auto-restored successfully.');
+} else {
+  safeSaveDb();
+}
 
 // RBAC Middleware Helpers
 function authenticate(req: Request, res: Response, next: NextFunction) {
@@ -96,7 +189,6 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     };
 
     const token = Buffer.from(JSON.stringify(authUser)).toString('base64');
-
     return res.json({ token, user: authUser });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Login failed' });
@@ -108,7 +200,7 @@ app.get('/api/auth/me', authenticate, (req: Request, res: Response) => {
   return res.json({ user });
 });
 
-// SETTINGS & WOOCOMMERCE CONNECTION
+// SETTINGS & WOOCOMMERCE CONNECTION (মাস্টার ব্যাকআপসহ)
 app.get('/api/settings', authenticate, requireSuperAdmin, (_req: Request, res: Response) => {
   const db = getDb();
   res.json(db.settings);
@@ -127,7 +219,7 @@ app.put('/api/settings', authenticate, requireSuperAdmin, (req: Request, res: Re
     updatedAt: new Date().toISOString(),
   };
 
-  saveDb();
+  safeSaveDb();
   res.json({ success: true, settings: db.settings });
 });
 
@@ -198,6 +290,7 @@ app.post('/api/woocommerce/pull-orders', authenticate, async (req: Request, res:
       startDate: start_date,
       endDate: end_date,
     });
+    safeSaveDb();
     return res.json(result);
   } catch (err: any) {
     const detail = err.cause?.message ? `${err.message} (${err.cause.message})` : (err.message || 'Failed to pull order from WooCommerce');
@@ -232,6 +325,7 @@ app.post('/api/webhooks/woocommerce/simulate-test', authenticate, requireSuperAd
     total: 1380,
   });
 
+  safeSaveDb();
   return res.json({
     success: true,
     message: `Simulated test order #${fakeId} created with Size: L!`,
@@ -272,6 +366,7 @@ const handleWooCommerceWebhook = (req: Request, res: Response) => {
   }
 
   const syncedOrder = ingestWooCommerceOrder(payload);
+  safeSaveDb();
 
   return res.status(200).json({
     success: true,
@@ -305,7 +400,7 @@ app.post('/api/cancel-reasons', authenticate, requireSuperAdmin, (req: Request, 
   };
 
   db.cancelReasons.push(newReason);
-  saveDb();
+  safeSaveDb();
   res.json(newReason);
 });
 
@@ -322,7 +417,7 @@ app.put('/api/cancel-reasons/:id', authenticate, requireSuperAdmin, (req: Reques
   if (reason_text !== undefined) reason.reason_text = reason_text.trim();
   if (is_active !== undefined) reason.is_active = Boolean(is_active);
 
-  saveDb();
+  safeSaveDb();
   res.json(reason);
 });
 
@@ -336,7 +431,7 @@ app.delete('/api/cancel-reasons/:id', authenticate, requireSuperAdmin, (req: Req
   }
 
   db.cancelReasons.splice(index, 1);
-  saveDb();
+  safeSaveDb();
   res.json({ success: true, message: 'Reason deleted' });
 });
 
@@ -373,7 +468,7 @@ app.post('/api/users', authenticate, requireSuperAdmin, async (req: Request, res
     };
 
     db.users.push(newUser);
-    saveDb();
+    safeSaveDb();
 
     const { password_hash: _, ...safeUser } = newUser;
     return res.json(safeUser);
@@ -403,7 +498,7 @@ app.put('/api/users/:id', authenticate, requireSuperAdmin, async (req: Request, 
     }
     user.updatedAt = new Date().toISOString();
 
-    saveDb();
+    safeSaveDb();
     const { password_hash: _, ...safeUser } = user;
     return res.json(safeUser);
   } catch (err: any) {
@@ -517,7 +612,7 @@ app.post('/api/orders/:id/notes', authenticate, async (req: Request, res: Respon
 
   db.activityLogs.unshift(newLog);
   order.updatedAt = new Date().toISOString();
-  saveDb();
+  safeSaveDb();
 
   return res.json({
     success: true,
@@ -526,13 +621,18 @@ app.post('/api/orders/:id/notes', authenticate, async (req: Request, res: Respon
   });
 });
 
+// স্ট্যাটাস পরিবর্তন: Others ও কাস্টম রিজন হ্যান্ডলিং সহ সম্পূর্ণ ভ্যালিডেশন
 app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Response) => {
   const rawId = parseInt(req.params.id, 10);
   if (isNaN(rawId)) {
     return res.status(400).json({ error: 'Order ID must be an integer WooCommerce ID' });
   }
 
-  const { status, cancel_reason_id } = req.body as { status: OrderStatus; cancel_reason_id?: string };
+  const { status, cancel_reason_id, custom_reason } = req.body as {
+    status: OrderStatus;
+    cancel_reason_id?: string;
+    custom_reason?: string;
+  };
   const user = (req as any).user as AuthUser;
 
   if (!status) {
@@ -545,6 +645,7 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
     return res.status(404).json({ error: `Order #${rawId} not found` });
   }
 
+  // কঠোর রুলস ভ্যালিডেশন
   const allowed = ALLOWED_TRANSITIONS[order.status] || [];
   if (!allowed.includes(status)) {
     return res.status(400).json({
@@ -557,12 +658,19 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
     if (!cancel_reason_id) {
       return res.status(400).json({ error: 'A cancellation reason is strictly required to cancel an order' });
     }
-    const reason = db.cancelReasons.find(r => r.id === cancel_reason_id);
-    if (!reason) {
-      return res.status(400).json({ error: 'Invalid cancellation reason ID selected' });
+
+    // Others সিলেক্ট করলে কাস্টম রিজন সেট হবে
+    if (cancel_reason_id === 'other') {
+      cancelReasonText = (custom_reason && custom_reason.trim()) ? custom_reason.trim() : 'Other / Custom Reason';
+      order.cancel_reason_id = 'other';
+    } else {
+      const reason = db.cancelReasons.find(r => r.id === cancel_reason_id);
+      if (!reason) {
+        return res.status(400).json({ error: 'Invalid cancellation reason ID selected' });
+      }
+      cancelReasonText = reason.reason_text;
+      order.cancel_reason_id = cancel_reason_id;
     }
-    cancelReasonText = reason.reason_text;
-    order.cancel_reason_id = cancel_reason_id;
   } else {
     order.cancel_reason_id = null;
   }
@@ -593,7 +701,7 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
   };
   db.activityLogs.unshift(newLog);
 
-  saveDb();
+  safeSaveDb();
 
   const syncResult = await syncOrderToWooCommerce(rawId, {
     status,
@@ -668,7 +776,7 @@ app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => 
     });
   }
 
-  saveDb();
+  safeSaveDb();
 
   const syncResult = await syncOrderToWooCommerce(rawId, {
     customer_name: order.customer_name,
@@ -732,7 +840,7 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
     }
   }
 
-  saveDb();
+  safeSaveDb();
   return res.json({ success: true, count: updatedCount });
 });
 
@@ -791,7 +899,6 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     const t = new Date(o.createdAt).getTime();
     return !isNaN(t) && t >= startMs && t <= endMs;
   });
-  // ঐ তারিখে তৈরি হওয়া যেসব অর্ডার Approved হয়েছে (অথবা পরবর্তীতে ডেলিভারি হয়ে Completed হয়েছে)
   const metaCapiDispatched = createdOrders.filter(
     o => o.status === 'approved' || o.status === 'completed'
   ).length;
@@ -820,7 +927,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     hold,
     completed,
     cancelled,
-    metaCapiDispatched, // অর্ডার ক্রিয়েশন তারিখের মেটা পারচেজ ডিসপ্যাচ সংখ্যা
+    metaCapiDispatched,
     pendingPercent: Math.round((pending / total) * 100),
     approvedPercent: Math.round((approved / total) * 100),
     holdPercent: Math.round((hold / total) * 100),
@@ -829,7 +936,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     grossRevenue,
   };
 
-  // ৩। মডারেটর পারফরম্যান্স: লগ অ্যাকশন টাইম (timestamp) অনুযায়ী
+  // ৩। মডারেটর পারফরম্যান্স
   const moderators = db.users.filter(u => u.role === 'moderator' || u.role === 'super_admin');
   const moderatorPerformance = moderators.map(mod => {
     const modLogs = db.activityLogs.filter(l => {
@@ -852,7 +959,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     };
   });
 
-  // ৪। ক্যানসেলেশন রুট-কজ: মডিফাইড উইন্ডোর ক্যানসেলেশন অনুযায়ী
+  // ৪। ক্যানসেলেশন রুট-কজ (Others হ্যান্ডলিংসহ)
   const cancelledOrders = modifiedOrders.filter(o => o.status === 'cancelled');
   const cancelReasonsMap = new Map(db.cancelReasons.map(r => [r.id, r.reason_text]));
   const reasonCounts: Record<string, number> = {};
@@ -863,7 +970,10 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   }
 
   const rootCauses = Object.entries(reasonCounts).map(([reasonId, count]) => {
-    const reasonText = cancelReasonsMap.get(reasonId) || 'Unspecified / Legacy Cancellation';
+    const reasonText = reasonId === 'other'
+      ? 'Others / Custom Reason'
+      : (cancelReasonsMap.get(reasonId) || 'Unspecified / Legacy Cancellation');
+
     return {
       reason_id: reasonId,
       reason_text: reasonText,
