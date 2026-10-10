@@ -28,6 +28,16 @@ export interface WCOrderPayload {
   meta_data?: Array<{ key: string; value: any; display_key?: string; display_value?: string }>;
 }
 
+export interface PullOrdersOptions {
+  orderId?: number;
+  hours?: number;
+  startDate?: string;
+  endDate?: string;
+}
+
+/**
+ * Validates WooCommerce Webhook HMAC-SHA256 signature
+ */
 export function verifyWooCommerceWebhookSignature(
   rawBody: string | Buffer,
   signatureHeader?: string,
@@ -45,6 +55,9 @@ export function verifyWooCommerceWebhookSignature(
   }
 }
 
+/**
+ * Map SOMS status to WooCommerce REST API status
+ */
 export function mapSomsStatusToWcStatus(somsStatus: OrderStatus): string {
   switch (somsStatus) {
     case 'pending': return 'processing';
@@ -81,6 +94,9 @@ function extractSize(item: any, orderPayload: any): string | undefined {
   return undefined;
 }
 
+/**
+ * Dispatches Outbound Sync to WooCommerce REST API
+ */
 export async function syncOrderToWooCommerce(
   wcOrderId: number,
   updates: {
@@ -123,7 +139,7 @@ export async function syncOrderToWooCommerce(
 
   if (settings.wc_store_url && settings.wc_consumer_key && settings.wc_consumer_secret) {
     try {
-      const baseUrl = settings.wc_store_url.replace(/\/\$/, '');
+      const baseUrl = settings.wc_store_url.replace(/\/+\$/, '');
       const authHeader = 'Basic ' + Buffer.from(`${settings.wc_consumer_key}:${settings.wc_consumer_secret}`).toString('base64');
       const targetUrl = new URL(`${baseUrl}/wp-json/wc/v3/orders/${wcOrderId}`);
       targetUrl.searchParams.set('consumer_key', settings.wc_consumer_key);
@@ -131,9 +147,13 @@ export async function syncOrderToWooCommerce(
 
       const res = await fetch(targetUrl.toString(), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: authHeader,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) SOMS-Bridge/2.4',
+        },
         body: JSON.stringify(wcPayload),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(15000),
       });
 
       if (res.ok && internalNoteAdded) {
@@ -143,7 +163,11 @@ export async function syncOrderToWooCommerce(
 
         await fetch(noteUrl.toString(), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: authHeader,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) SOMS-Bridge/2.4',
+          },
           body: JSON.stringify({ note: `[SOMS Cancelled] Reason: ${updates.cancelReasonText}`, customer_note: false }),
         }).catch(() => null);
       }
@@ -159,6 +183,9 @@ export async function syncOrderToWooCommerce(
   return { success: true, message: `Synced #${wcOrderId}`, metaCapiTriggered: updates.status === 'completed', internalNoteAdded };
 }
 
+/**
+ * Process Inbound WooCommerce Webhook Order Created
+ */
 export function ingestWooCommerceOrder(payload: any): Order {
   const db = getDb();
   const wcOrderId = payload.id;
@@ -229,7 +256,12 @@ export function ingestWooCommerceOrder(payload: any): Order {
   return newOrder;
 }
 
-export async function pullOrdersFromWooCommerce(orderId?: number): Promise<{ success: boolean; count: number; message: string }> {
+/**
+ * PULL ORDERS WITH TIME FILTER / SINGLE ID SUPPORT
+ */
+export async function pullOrdersFromWooCommerce(
+  arg?: number | PullOrdersOptions
+): Promise<{ success: boolean; count: number; message: string }> {
   const db = getDb();
   const settings = db.settings;
 
@@ -237,7 +269,21 @@ export async function pullOrdersFromWooCommerce(orderId?: number): Promise<{ suc
     throw new Error('WooCommerce API credentials not configured in settings.');
   }
 
-  const baseUrl = settings.wc_store_url.replace(/\/\$/, '');
+  let orderId: number | undefined;
+  let hours: number | undefined;
+  let startDate: string | undefined;
+  let endDate: string | undefined;
+
+  if (typeof arg === 'number') {
+    orderId = arg;
+  } else if (typeof arg === 'object' && arg !== null) {
+    orderId = arg.orderId;
+    hours = arg.hours;
+    startDate = arg.startDate;
+    endDate = arg.endDate;
+  }
+
+  const baseUrl = settings.wc_store_url.replace(/\/+\$/, '');
   const authHeader = 'Basic ' + Buffer.from(`${settings.wc_consumer_key}:${settings.wc_consumer_secret}`).toString('base64');
 
   let targetUrl: URL;
@@ -245,22 +291,36 @@ export async function pullOrdersFromWooCommerce(orderId?: number): Promise<{ suc
     targetUrl = new URL(`${baseUrl}/wp-json/wc/v3/orders/${orderId}`);
   } else {
     targetUrl = new URL(`${baseUrl}/wp-json/wc/v3/orders`);
-    targetUrl.searchParams.set('per_page', '20');
+    targetUrl.searchParams.set('per_page', '50');
     targetUrl.searchParams.set('orderby', 'date');
     targetUrl.searchParams.set('order', 'desc');
+
+    if (hours && hours > 0) {
+      const afterDate = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+      targetUrl.searchParams.set('after', afterDate);
+    } else if (startDate) {
+      targetUrl.searchParams.set('after', new Date(startDate).toISOString());
+      if (endDate) {
+        targetUrl.searchParams.set('before', new Date(endDate).toISOString());
+      }
+    }
   }
 
   targetUrl.searchParams.set('consumer_key', settings.wc_consumer_key);
   targetUrl.searchParams.set('consumer_secret', settings.wc_consumer_secret);
 
   const res = await fetch(targetUrl.toString(), {
-    headers: { Authorization: authHeader, Accept: 'application/json' },
-    signal: AbortSignal.timeout(12000),
+    headers: {
+      Authorization: authHeader,
+      Accept: 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) SOMS-Bridge/2.4',
+    },
+    signal: AbortSignal.timeout(30000), // 30s timeout to prevent 'fetch failed'
   });
 
   if (!res.ok) {
     const errorText = await res.text();
-    throw new Error(`WooCommerce REST API returned HTTP ${res.status}: ${errorText}`);
+    throw new Error(`WooCommerce REST API returned HTTP ${res.status}: ${errorText.slice(0, 160)}`);
   }
 
   const data = await res.json();
@@ -278,7 +338,7 @@ export async function pullOrdersFromWooCommerce(orderId?: number): Promise<{ suc
     success: true,
     count: imported,
     message: orderId
-      ? `Order #${orderId} pulled successfully from WooCommerce!`
-      : `Successfully pulled ${imported} orders from WooCommerce!`,
+      ? `Order #${orderId} pulled and synced successfully!`
+      : `Successfully pulled and synced ${imported} orders from WooCommerce!`,
   };
 }
