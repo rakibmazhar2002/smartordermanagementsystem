@@ -10,11 +10,6 @@ import {
   Check,
   Edit2,
   History,
-  CheckCircle,
-  PauseCircle,
-  XCircle,
-  Truck,
-  RotateCcw,
   Package,
 } from 'lucide-react';
 
@@ -182,44 +177,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     setSelectedOrderIds(prev =>
       prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
-  };
-
-  // Render Status Badge
-  const renderStatusBadge = (status: OrderStatus) => {
-    switch (status) {
-      case 'pending':
-        return (
-          <span className="inline-flex items-center text-xs font-semibold text-amber-400 bg-amber-950/40 border border-amber-900/50 px-2 py-0.5 rounded">
-            Pending
-          </span>
-        );
-      case 'approved':
-        return (
-          <span className="inline-flex items-center text-xs font-semibold text-emerald-400 bg-emerald-950/40 border border-emerald-900/50 px-2 py-0.5 rounded">
-            Approved
-          </span>
-        );
-      case 'hold':
-        return (
-          <span className="inline-flex items-center text-xs font-semibold text-indigo-400 bg-indigo-950/40 border border-indigo-900/50 px-2 py-0.5 rounded">
-            On Hold
-          </span>
-        );
-      case 'completed':
-        return (
-          <span className="inline-flex items-center text-xs font-semibold text-cyan-400 bg-cyan-950/40 border border-cyan-900/50 px-2 py-0.5 rounded">
-            Completed
-          </span>
-        );
-      case 'cancelled':
-        return (
-          <span className="inline-flex items-center text-xs font-semibold text-red-400 bg-red-950/40 border border-red-900/50 px-2 py-0.5 rounded">
-            Cancelled
-          </span>
-        );
-      default:
-        return <span className="text-xs text-slate-400">{status}</span>;
-    }
   };
 
   return (
@@ -513,9 +470,37 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         )}
                       </td>
 
-                      {/* Status */}
+                      {/* Status Dropdown */}
                       <td className="py-3 px-3 whitespace-nowrap">
-                        <div>{renderStatusBadge(order.status)}</div>
+                        <select
+                          value={order.status}
+                          onChange={(e) => {
+                            const newStatus = e.target.value as OrderStatus;
+                            if (newStatus === 'cancelled') {
+                              setCancellingOrder(order);
+                            } else {
+                              handleStatusChange(order.id, newStatus);
+                            }
+                          }}
+                          className={`text-xs font-semibold rounded-lg px-2.5 py-1 border focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer transition ${
+                            order.status === 'pending'
+                              ? 'bg-amber-950/40 border-amber-900/60 text-amber-400'
+                              : order.status === 'approved'
+                              ? 'bg-emerald-950/40 border-emerald-900/60 text-emerald-400'
+                              : order.status === 'hold'
+                              ? 'bg-indigo-950/40 border-indigo-900/60 text-indigo-400'
+                              : order.status === 'completed'
+                              ? 'bg-cyan-950/40 border-cyan-900/60 text-cyan-400'
+                              : 'bg-red-950/40 border-red-900/60 text-red-400'
+                          }`}
+                        >
+                          <option value="pending" className="bg-slate-900 text-amber-400 font-semibold">Pending</option>
+                          <option value="approved" className="bg-slate-900 text-emerald-400 font-semibold">Approved</option>
+                          <option value="hold" className="bg-slate-900 text-indigo-400 font-semibold">On Hold</option>
+                          <option value="completed" className="bg-slate-900 text-cyan-400 font-semibold">Completed</option>
+                          <option value="cancelled" className="bg-slate-900 text-red-400 font-semibold">Cancelled</option>
+                        </select>
+
                         {order.cancel_reason && (
                           <div className="text-[10px] text-red-400 mt-1 truncate max-w-[120px]" title={order.cancel_reason.reason_text}>
                             {order.cancel_reason.reason_text}
@@ -523,79 +508,14 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         )}
                       </td>
 
-                      {/* Quick Operations Buttons */}
+                      {/* Quick Operations: Only Edit & History Logs */}
                       <td className="py-3 px-3 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1">
-                          {/* Status buttons based on current state */}
-                          {order.status === 'pending' && (
-                            <>
-                              <button
-                                onClick={() => handleStatusChange(order.id, 'approved')}
-                                title="Confirm Lead (Approve & Sync WC)"
-                                className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-600/90 hover:bg-emerald-500 text-white font-medium text-[11px] transition shadow-xs"
-                              >
-                                <CheckCircle className="w-3 h-3" />
-                                <span>Approve</span>
-                              </button>
-
-                              <button
-                                onClick={() => handleStatusChange(order.id, 'hold')}
-                                title="Put Order On Hold"
-                                className="flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] transition"
-                              >
-                                <PauseCircle className="w-3 h-3 text-indigo-400" />
-                                <span>Hold</span>
-                              </button>
-                            </>
-                          )}
-
-                          {order.status === 'approved' && (
-                            <>
-                              <button
-                                onClick={() => handleStatusChange(order.id, 'completed')}
-                                title="Mark Completed (Dispatches WC Meta CAPI Purchase Event!)"
-                                className="flex items-center gap-1 px-2 py-1 rounded bg-cyan-700 hover:bg-cyan-600 text-white font-medium text-[11px] transition shadow-xs"
-                              >
-                                <Truck className="w-3 h-3" />
-                                <span>Complete</span>
-                              </button>
-
-                              <button
-                                onClick={() => handleStatusChange(order.id, 'hold')}
-                                title="Put Order On Hold"
-                                className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-                              >
-                                <PauseCircle className="w-3.5 h-3.5" />
-                              </button>
-                            </>
-                          )}
-
-                          {order.status === 'hold' && (
-                            <button
-                              onClick={() => handleStatusChange(order.id, 'approved')}
-                              title="Resume to Approved"
-                              className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-medium text-[11px] transition"
-                            >
-                              <RotateCcw className="w-3 h-3" />
-                              <span>Re-Approve</span>
-                            </button>
-                          )}
-
-                          {order.status !== 'cancelled' && (
-                            <button
-                              onClick={() => setCancellingOrder(order)}
-                              title="Strict Cancellation Flow"
-                              className="p-1 rounded bg-slate-800 hover:bg-red-950/80 hover:text-red-400 text-slate-400 transition"
-                            >
-                              <XCircle className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-
+                        <div className="flex items-center justify-end gap-1.5">
                           {/* Edit Details */}
                           <button
                             onClick={() => setEditingOrder(order)}
                             title="Edit Order Details & Items"
-                            className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition shadow-sm"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
@@ -604,7 +524,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                           <button
                             onClick={() => handleOpenAudit(order)}
                             title="View Chronological Audit Timeline"
-                            className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-indigo-400 transition"
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-indigo-400 transition shadow-sm"
                           >
                             <History className="w-3.5 h-3.5" />
                           </button>
