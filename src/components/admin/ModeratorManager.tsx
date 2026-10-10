@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.ts';
 import { User } from '../../types/index.ts';
-import { Users, UserPlus, KeyRound, Shield, CheckCircle2, XCircle } from 'lucide-react';
+import { Users, UserPlus, KeyRound, Shield, CheckCircle2, XCircle, X } from 'lucide-react';
 
 export const ModeratorManager: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -12,6 +12,11 @@ export const ModeratorManager: React.FC = () => {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'moderator' | 'super_admin'>('moderator');
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // পাসওয়ার্ড রিসেট স্টেট
+  const [resettingUser, setResettingUser] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
 
   const fetchUsers = async () => {
     setIsLoading(true);
@@ -65,6 +70,28 @@ export const ModeratorManager: React.FC = () => {
       setTimeout(() => setMessage(null), 3000);
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Failed to update status' });
+    }
+  };
+
+  // পাসওয়ার্ড রিসেট সাবমিট
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resettingUser || !newPassword.trim()) return;
+    setIsResetting(true);
+
+    try {
+      await api.updateUser(resettingUser.id, { password: newPassword.trim() });
+      setMessage({
+        type: 'success',
+        text: `${resettingUser.name}-এর নতুন পাসওয়ার্ড সফলভাবে সেট হয়েছে।`,
+      });
+      setResettingUser(null);
+      setNewPassword('');
+      setTimeout(() => setMessage(null), 3500);
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'পাসওয়ার্ড রিসেট করা যায়নি।' });
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -160,19 +187,33 @@ export const ModeratorManager: React.FC = () => {
                         <span className="capitalize">{u.status}</span>
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-right">
-                      {u.role !== 'super_admin' && (
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-2">
+                        {/* রিসেট পাসওয়ার্ড বাটন */}
                         <button
-                          onClick={() => handleToggleStatus(u)}
-                          className={`px-2.5 py-1 rounded text-[11px] font-medium transition ${
-                            u.status === 'active'
-                              ? 'bg-slate-800 text-slate-400 hover:text-red-400'
-                              : 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/60'
-                          }`}
+                          onClick={() => {
+                            setResettingUser(u);
+                            setNewPassword('');
+                          }}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 transition"
+                          title="Reset Password"
                         >
-                          {u.status === 'active' ? 'Deactivate' : 'Activate'}
+                          <KeyRound className="w-3.5 h-3.5" />
                         </button>
-                      )}
+
+                        {u.role !== 'super_admin' && (
+                          <button
+                            onClick={() => handleToggleStatus(u)}
+                            className={`px-2.5 py-1 rounded text-[11px] font-medium transition ${
+                              u.status === 'active'
+                                ? 'bg-slate-800 text-slate-400 hover:text-red-400'
+                                : 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/60'
+                            }`}
+                          >
+                            {u.status === 'active' ? 'Deactivate' : 'Activate'}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -261,6 +302,67 @@ export const ModeratorManager: React.FC = () => {
                   className="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-xs"
                 >
                   Create Account
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {resettingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-[#121624] border border-slate-800 rounded-xl max-w-sm w-full shadow-2xl overflow-hidden p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-950/60 border border-amber-800/80 flex items-center justify-center text-amber-400">
+                  <KeyRound className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Reset Password</h3>
+                  <p className="text-[11px] text-slate-400 truncate max-w-[200px]">
+                    {resettingUser.name} ({resettingUser.email})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setResettingUser(null)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleResetPasswordSubmit} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  New Password
+                </label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  placeholder="নতুন পাসওয়ার্ড দিন..."
+                  required
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="pt-2 border-t border-slate-800 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setResettingUser(null)}
+                  disabled={isResetting}
+                  className="px-3.5 py-1.5 rounded text-xs text-slate-400 hover:text-white bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isResetting || !newPassword.trim()}
+                  className="px-4 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-xs disabled:opacity-50"
+                >
+                  {isResetting ? 'Updating...' : 'Set Password'}
                 </button>
               </div>
             </form>
