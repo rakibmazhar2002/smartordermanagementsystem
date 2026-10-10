@@ -70,10 +70,32 @@ export function mapSomsStatusToWcStatus(somsStatus: OrderStatus): string {
 }
 
 /**
+ * Map WooCommerce Status back to SOMS status (2-Way Reverse Sync)
+ */
+export function mapWcStatusToSomsStatus(wcStatus: string, currentStatus?: OrderStatus): OrderStatus {
+  const s = String(wcStatus || '').toLowerCase().trim();
+  switch (s) {
+    case 'processing':
+      return currentStatus === 'approved' ? 'approved' : 'pending';
+    case 'pending':
+      return 'pending';
+    case 'on-hold':
+      return 'hold';
+    case 'completed':
+      return 'completed';
+    case 'cancelled':
+    case 'failed':
+    case 'refunded':
+      return 'cancelled';
+    default:
+      return currentStatus || 'pending';
+  }
+}
+
+/**
  * Extract Size from WooCommerce custom checkout meta or line item meta
  */
 function extractSize(item: any, orderPayload: any): string | undefined {
-  // 1. Check line item meta
   if (Array.isArray(item.meta_data)) {
     const found = item.meta_data.find((m: any) => {
       const k = String(m.key || m.display_key || '').toLowerCase();
@@ -82,7 +104,6 @@ function extractSize(item: any, orderPayload: any): string | undefined {
     if (found && found.value) return String(found.display_value || found.value);
   }
 
-  // 2. Check Order-level custom checkout meta (CartFlows / Custom fields)
   if (Array.isArray(orderPayload?.meta_data)) {
     const found = orderPayload.meta_data.find((m: any) => {
       const k = String(m.key || m.display_key || '').toLowerCase();
@@ -184,7 +205,7 @@ export async function syncOrderToWooCommerce(
 }
 
 /**
- * Process Inbound WooCommerce Webhook Order Created
+ * Process Inbound WooCommerce Webhook (Order Created / Order Updated)
  */
 export function ingestWooCommerceOrder(payload: any): Order {
   const db = getDb();
@@ -211,7 +232,25 @@ export function ingestWooCommerceOrder(payload: any): Order {
   const shippingFee = Number(payload.shipping_total) || 80;
   const totalAmount = Number(payload.total) || items.reduce((acc, i) => acc + i.total, 0) + shippingFee;
 
+  // যদি অর্ডার আগে থেকেই SOMS-এ থাকে (Order Updated ঘটনায়)
   if (existing) {
+    const oldStatus = existing.status;
+    const newStatus = mapWcStatusToSomsStatus(payload.status, existing.status);
+
+    // WooCommerce থেকে আসা নতুন স্ট্যাটাস আপডেট করা হলো
+    if (oldStatus !== newStatus) {
+      existing.status = newStatus;
+      db.activityLogs.unshift({
+        id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        order_id: wcOrderId,
+        user_id: null,
+        user_name: 'WooCommerce Webhook (Sync)',
+        action_type: newStatus === 'cancelled' ? 'cancelled' : 'status_change',
+        description: `Status updated from ${oldStatus.toUpperCase()} to ${newStatus.toUpperCase()} via WooCommerce.`,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     existing.items_json = items;
     existing.customer_name = customerName;
     existing.phone = phone;
@@ -219,9 +258,14 @@ export function ingestWooCommerceOrder(payload: any): Order {
     existing.total_amount = totalAmount;
     existing.shipping_fee = shippingFee;
     existing.updatedAt = new Date().toISOString();
+    existing.wc_sync_status = 'synced';
+    existing.wc_last_synced_at = new Date().toISOString();
     saveDb();
     return existing;
   }
+
+  // নতুন অর্ডার তৈরি
+  const initialStatus = mapWcStatusToSomsStatus(payload.status, 'pending');
 
   const newOrder: Order = {
     id: wcOrderId,
@@ -231,7 +275,7 @@ export function ingestWooCommerceOrder(payload: any): Order {
     items_json: items,
     shipping_fee: shippingFee,
     total_amount: totalAmount,
-    status: 'pending',
+    status: initialStatus,
     cancel_reason_id: null,
     updated_by_id: null,
     createdAt: new Date(payload.date_created || Date.now()).toISOString(),
@@ -248,7 +292,7 @@ export function ingestWooCommerceOrder(payload: any): Order {
     user_id: null,
     user_name: 'WooCommerce Webhook',
     action_type: 'order_created',
-    description: `Order #${wcOrderId} ingested with size details.`,
+    description: `Order #${wcOrderId} ingested with size details (Initial status: ${initialStatus.toUpperCase()}).`,
     timestamp: new Date().toISOString(),
   });
 
@@ -315,7 +359,7 @@ export async function pullOrdersFromWooCommerce(
       Accept: 'application/json',
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) SOMS-Bridge/2.4',
     },
-    signal: AbortSignal.timeout(30000), // 30s timeout to prevent 'fetch failed'
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!res.ok) {
