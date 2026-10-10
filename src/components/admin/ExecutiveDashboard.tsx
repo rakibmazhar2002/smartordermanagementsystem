@@ -52,6 +52,23 @@ export const ExecutiveDashboard: React.FC = () => {
     }
   };
 
+  const getRangeLabel = () => {
+    switch (selectedRange) {
+      case 'today':
+        return "Today's Pulse";
+      case 'yesterday':
+        return "Yesterday's Pulse";
+      case 'last7days':
+        return "Last 7 Days' Pulse";
+      case 'thismonth':
+        return "This Month's Pulse";
+      case 'custom':
+        return "Custom Range Pulse";
+      default:
+        return "Performance Pulse";
+    }
+  };
+
   if (!data && isLoading) {
     return (
       <div className="py-20 text-center text-slate-500">
@@ -88,7 +105,7 @@ export const ExecutiveDashboard: React.FC = () => {
             <span>Executive Analytics & Moderator Performance</span>
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            Real-time throughput metrics · Two-way conversion pulse · Decoupled audit telemetry
+            Meta Ads Attribution (Order Date) · Operational Moderation (Action Date)
           </p>
         </div>
 
@@ -151,14 +168,19 @@ export const ExecutiveDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* SECTION 1: "Today's Pulse" - KPI Metric Cards */}
+      {/* SECTION 1: Dynamic Pulse Title - KPI Metric Cards */}
       <div>
-        <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
-          Today's Pulse · Volume & Conversion Health
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+            {getRangeLabel()} · Volume & Conversion Health
+          </div>
+          <span className="text-[11px] text-slate-500 hidden sm:inline">
+            Meta CAPI matches Order Date · Cancellations reflect Modified Window
+          </span>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          {/* Total Orders */}
+          {/* Total Orders (Created Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Total Ingested</span>
@@ -168,7 +190,7 @@ export const ExecutiveDashboard: React.FC = () => {
               <div className="text-2xl font-bold font-mono text-white tabular-nums">
                 {pulse.total}
               </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">100% of pipeline</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">Order Created Date</div>
             </div>
           </div>
 
@@ -220,7 +242,7 @@ export const ExecutiveDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Completed */}
+          {/* Completed (Meta CAPI Purchase - Matches Meta Ads Manager) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Completed</span>
@@ -230,11 +252,11 @@ export const ExecutiveDashboard: React.FC = () => {
               <div className="text-2xl font-bold font-mono text-cyan-400 tabular-nums">
                 {pulse.completed}
               </div>
-              <div className="text-[11px] text-cyan-500 mt-0.5">Meta CAPI Dispatched</div>
+              <div className="text-[11px] text-cyan-400 font-medium mt-0.5">Meta CAPI Dispatched</div>
             </div>
           </div>
 
-          {/* Cancelled */}
+          {/* Cancelled (Action / Modified Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Cancelled</span>
@@ -244,9 +266,7 @@ export const ExecutiveDashboard: React.FC = () => {
               <div className="text-2xl font-bold font-mono text-red-400 tabular-nums">
                 {pulse.cancelled}
               </div>
-              <div className="text-[11px] text-red-400/80 mt-0.5">
-                <span className="font-mono tabular-nums">{pulse.cancelledPercent}%</span> drop-off
-              </div>
+              <div className="text-[11px] text-red-400/80 mt-0.5">Action Modified Date</div>
             </div>
           </div>
         </div>
@@ -258,14 +278,14 @@ export const ExecutiveDashboard: React.FC = () => {
               <DollarSign className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-xs text-slate-400">Confirmed Gross Pipeline Revenue</div>
+              <div className="text-xs text-slate-400">Confirmed Gross Pipeline Revenue (Meta Attributed)</div>
               <div className="text-xl font-bold font-mono text-white tabular-nums">
                 {pulse.grossRevenue.toLocaleString()} BDT
               </div>
             </div>
           </div>
           <div className="text-right text-xs text-slate-400 hidden sm:block">
-            <span>Approved & Delivered Orders</span>
+            <span>Approved & Delivered Orders of this Order Date</span>
           </div>
         </div>
       </div>
@@ -281,7 +301,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 Moderator Operations & Output
               </h2>
             </div>
-            <span className="text-[11px] text-slate-500">Live Staff Productivity</span>
+            <span className="text-[11px] text-slate-500">Live Staff Productivity (Action Date)</span>
           </div>
 
           <div className="overflow-x-auto">
@@ -337,7 +357,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 Cancellation Root-Cause Analysis
               </h2>
             </div>
-            <span className="text-[11px] text-slate-500">Reason Breakdown</span>
+            <span className="text-[11px] text-slate-500">Reason Breakdown (Action Date)</span>
           </div>
 
           <div className="space-y-3 pt-1">
