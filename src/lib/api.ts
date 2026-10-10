@@ -1,209 +1,235 @@
-/**
- * SOMS High-Speed Zero-Latency API Client
- */
-import {
-  User,
-  Setting,
-  CancelReason,
-  Order,
-  OrderStatus,
-  OrderItem,
-  ExecutiveAnalyticsData,
-} from '../types/index.ts';
+import { Order, OrderStatus, CancelReason } from '../types/index.ts';
 
-const TOKEN_KEY = 'soms_auth_token';
-
-export function getStoredToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setStoredToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function removeStoredToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
-}
-
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = getStoredToken();
-  const headers = new Headers(options.headers || {});
-  headers.set('Content-Type', 'application/json');
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-
-  const response = await fetch(endpoint, {
-    ...options,
-    headers,
-  });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(data.error || data.message || `Request failed with status ${response.status}`);
-  }
-
-  return data as T;
-}
+const getAuthHeader = () => {
+  const token = localStorage.getItem('soms_token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 export const api = {
-  // Auth
-  async login(email: string, password: string) {
-    const res = await request<{ token: string; user: User }>('/api/auth/login', {
+  login: async (creds: { email: string; password: string }) => {
+    const res = await fetch('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(creds),
     });
-    setStoredToken(res.token);
-    return res;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Login failed' }));
+      throw new Error(err.error || 'Login failed');
+    }
+    return res.json();
   },
 
-  async getMe() {
-    return request<{ user: User }>('/api/auth/me');
+  getMe: async () => {
+    const res = await fetch('/api/auth/me', {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('Not authenticated');
+    return res.json();
   },
 
-  // Settings
-  async getSettings() {
-    return request<Setting>('/api/settings');
+  getOrders: async (params?: { status?: string; search?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.status && params.status !== 'all') query.set('status', params.status);
+    if (params?.search) query.set('search', params.search);
+
+    const res = await fetch(`/api/orders?${query.toString()}`, {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch orders');
+    return res.json();
   },
 
-  async updateSettings(settings: Partial<Setting>) {
-    return request<{ success: boolean; settings: Setting }>('/api/settings', {
+  getOrder: async (id: number) => {
+    const res = await fetch(`/api/orders/${id}`, {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch order');
+    return res.json();
+  },
+
+  updateOrderStatus: async (id: number, status: OrderStatus, cancelReasonId?: string) => {
+    const res = await fetch(`/api/orders/${id}/status`, {
       method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify({ status, cancel_reason_id: cancelReasonId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Update failed' }));
+      throw new Error(err.error || 'Failed to update order status');
+    }
+    return res.json();
+  },
+
+  updateOrderDetails: async (id: number, data: any) => {
+    const res = await fetch(`/api/orders/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Update failed' }));
+      throw new Error(err.error || 'Failed to update order');
+    }
+    return res.json();
+  },
+
+  bulkUpdateStatus: async (orderIds: number[], status: OrderStatus) => {
+    const res = await fetch('/api/orders/bulk-status', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify({ order_ids: orderIds, status }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Bulk update failed' }));
+      throw new Error(err.error || 'Bulk update failed');
+    }
+    return res.json();
+  },
+
+  pullOrders: async (orderId?: number | string) => {
+    const res = await fetch('/api/woocommerce/pull-orders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify({ order_id: orderId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Pull failed' }));
+      throw new Error(err.error || 'Failed to pull orders');
+    }
+    return res.json();
+  },
+
+  getCancelReasons: async () => {
+    const res = await fetch('/api/cancel-reasons', {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch cancel reasons');
+    return res.json();
+  },
+
+  addCancelReason: async (reason_text: string) => {
+    const res = await fetch('/api/cancel-reasons', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify({ reason_text }),
+    });
+    if (!res.ok) throw new Error('Failed to add cancel reason');
+    return res.json();
+  },
+
+  updateCancelReason: async (id: string, data: any) => {
+    const res = await fetch(`/api/cancel-reasons/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to update reason');
+    return res.json();
+  },
+
+  deleteCancelReason: async (id: string) => {
+    const res = await fetch(`/api/cancel-reasons/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('Failed to delete reason');
+    return res.json();
+  },
+
+  getUsers: async () => {
+    const res = await fetch('/api/users', {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch users');
+    return res.json();
+  },
+
+  addUser: async (data: any) => {
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to add user' }));
+      throw new Error(err.error || 'Failed to add user');
+    }
+    return res.json();
+  },
+
+  updateUser: async (id: string, data: any) => {
+    const res = await fetch(`/api/users/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to update user');
+    return res.json();
+  },
+
+  getSettings: async () => {
+    const res = await fetch('/api/settings', {
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch settings');
+    return res.json();
+  },
+
+  updateSettings: async (settings: any) => {
+    const res = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
       body: JSON.stringify(settings),
     });
+    if (!res.ok) throw new Error('Failed to update settings');
+    return res.json();
   },
 
-  async testWooCommerceConnection(data?: Partial<Setting>) {
-    return request<{
-      success: boolean;
-      statusCode?: number;
-      message: string;
-      mode?: string;
-    }>('/api/woocommerce/test-connection', {
+  testWcConnection: async (settings?: any) => {
+    const res = await fetch('/api/woocommerce/test-connection', {
       method: 'POST',
-      body: JSON.stringify(data || {}),
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify(settings || {}),
     });
+    return res.json();
   },
 
-  // Webhook Simulator
-  async simulateWebhookOrder() {
-    return request<{ success: boolean; message: string; order: Order }>('/api/webhooks/woocommerce/simulate-test', {
-      method: 'POST',
+  getAnalytics: async (params?: { range?: string; startDate?: string; endDate?: string }) => {
+    const query = new URLSearchParams(params as any);
+    const res = await fetch(`/api/analytics?${query.toString()}`, {
+      headers: getAuthHeader(),
     });
-  },
-
-  // Cancel Reasons
-  async getCancelReasons() {
-    return request<CancelReason[]>('/api/cancel-reasons');
-  },
-
-  async createCancelReason(reason_text: string, is_active: boolean = true) {
-    return request<CancelReason>('/api/cancel-reasons', {
-      method: 'POST',
-      body: JSON.stringify({ reason_text, is_active }),
-    });
-  },
-
-  async updateCancelReason(id: string, data: { reason_text?: string; is_active?: boolean }) {
-    return request<CancelReason>(`/api/cancel-reasons/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
-  },
-
-  async deleteCancelReason(id: string) {
-    return request<{ success: boolean; message: string }>(`/api/cancel-reasons/${id}`, {
-      method: 'DELETE',
-    });
-  },
-
-  // Users (Moderator accounts)
-  async getUsers() {
-    return request<User[]>('/api/users');
-  },
-
-  async createUser(data: { name: string; email: string; password: string; role?: string; status?: string }) {
-    return request<User>('/api/users', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  },
-
-  async updateUser(id: string, data: Partial<User & { password?: string }>) {
-    return request<User>(`/api/users/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
-  },
-
-  // Orders
-  async getOrders(params?: { status?: string; search?: string }) {
-    const query = new URLSearchParams();
-    if (params?.status) query.set('status', params.status);
-    if (params?.search) query.set('search', params.search);
-    return request<{
-      orders: Order[];
-      counts: {
-        all: number;
-        pending: number;
-        approved: number;
-        hold: number;
-        completed: number;
-        cancelled: number;
-      };
-    }>(`/api/orders?${query.toString()}`);
-  },
-
-  async getOrder(id: number) {
-    return request<Order>(`/api/orders/${id}`);
-  },
-
-  async updateOrderStatus(id: number, status: OrderStatus, cancel_reason_id?: string) {
-    return request<{
-      success: boolean;
-      order: Order;
-      syncResult: { success: boolean; message: string; metaCapiTriggered?: boolean };
-    }>(`/api/orders/${id}/status`, {
-      method: 'PUT',
-      body: JSON.stringify({ status, cancel_reason_id }),
-    });
-  },
-
-  async updateOrderDetails(
-    id: number,
-    details: {
-      customer_name?: string;
-      phone?: string;
-      address?: string;
-      shipping_fee?: number;
-      items_json?: OrderItem[];
-    }
-  ) {
-    return request<{
-      success: boolean;
-      order: Order;
-      syncResult: { success: boolean; message: string };
-      diffs: string[];
-    }>(`/api/orders/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(details),
-    });
-  },
-
-  async bulkUpdateStatus(order_ids: number[], status: OrderStatus) {
-    return request<{ success: boolean; count: number }>('/api/orders/bulk-status', {
-      method: 'POST',
-      body: JSON.stringify({ order_ids, status }),
-    });
-  },
-
-  // Analytics
-  async getAnalytics(params?: { range?: string; startDate?: string; endDate?: string }) {
-    const query = new URLSearchParams();
-    if (params?.range) query.set('range', params.range);
-    if (params?.startDate) query.set('startDate', params.startDate);
-    if (params?.endDate) query.set('endDate', params.endDate);
-    return request<ExecutiveAnalyticsData>(`/api/analytics?${query.toString()}`);
+    if (!res.ok) throw new Error('Failed to fetch analytics');
+    return res.json();
   },
 };
