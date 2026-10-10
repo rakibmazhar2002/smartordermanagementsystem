@@ -54,6 +54,15 @@ function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+// কঠোর স্ট্যাটাস ট্রানজিশন ম্যাপিং
+const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  pending: ['approved', 'hold', 'cancelled'], // পেন্ডিং থেকে এপ্রুভ, হোল্ড ও ক্যানসেল
+  approved: ['completed'],                    // এপ্রুভ থেকে শুধুমাত্র কমপ্লিট
+  hold: ['approved', 'cancelled'],            // হোল্ড থেকে শুধুমাত্র এপ্রুভ ও ক্যানসেল (কমপ্লিট সম্পূর্ণ ব্লক)
+  completed: [],                              // কমপ্লিট হলে কোনো স্ট্যাটাস পরিবর্তন করা যাবে না (লক)
+  cancelled: [],                              // ক্যানসেল হলে কোনো স্ট্যাটাস পরিবর্তন করা যাবে না (লক)
+};
+
 // AUTHENTICATION ROUTES
 app.post('/api/auth/login', async (req: Request, res: Response) => {
   try {
@@ -477,6 +486,47 @@ app.get('/api/orders/:id', authenticate, (req: Request, res: Response) => {
   });
 });
 
+// ইন্টারনাল কমেন্ট বা কল নোট সেভ করার এপিআই
+app.post('/api/orders/:id/notes', authenticate, async (req: Request, res: Response) => {
+  const rawId = parseInt(req.params.id, 10);
+  if (isNaN(rawId)) {
+    return res.status(400).json({ error: 'Order ID must be an integer WooCommerce ID' });
+  }
+
+  const { note } = req.body;
+  const user = (req as any).user as AuthUser;
+
+  if (!note || !note.trim()) {
+    return res.status(400).json({ error: 'Note / comment cannot be empty' });
+  }
+
+  const db = getDb();
+  const order = db.orders.find(o => o.id === rawId);
+  if (!order) {
+    return res.status(404).json({ error: `Order #${rawId} not found` });
+  }
+
+  const newLog = {
+    id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    order_id: rawId,
+    user_id: user.id,
+    user_name: user.name,
+    action_type: 'internal_note' as any,
+    description: `[Call/Internal Note]: "${note.trim()}" (Added by ${user.name})`,
+    timestamp: new Date().toISOString(),
+  };
+
+  db.activityLogs.unshift(newLog);
+  order.updatedAt = new Date().toISOString();
+  saveDb();
+
+  return res.json({
+    success: true,
+    message: 'Internal note saved successfully',
+    log: newLog,
+  });
+});
+
 app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Response) => {
   const rawId = parseInt(req.params.id, 10);
   if (isNaN(rawId)) {
@@ -494,6 +544,14 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
   const order = db.orders.find(o => o.id === rawId);
   if (!order) {
     return res.status(404).json({ error: `Order #${rawId} not found` });
+  }
+
+  // কঠোর রুলস ভ্যালিডেশন (সার্ভার সাইড সিকিউরিটি গার্ড)
+  const allowed = ALLOWED_TRANSITIONS[order.status] || [];
+  if (!allowed.includes(status)) {
+    return res.status(400).json({
+      error: `Invalid transition: Order status ${order.status.toUpperCase()} cannot be changed to ${status.toUpperCase()}.`,
+    });
   }
 
   let cancelReasonText = '';
@@ -516,7 +574,7 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
   order.updated_by_id = user.id;
   order.updatedAt = new Date().toISOString();
 
-  // অ্যাক্টিভিটি লগ (Approved হলে মেটা পারচেজ ট্রিগার এবং Completed হলে লোকাল ডেলিভারি)
+  // অ্যাক্টিভিটি লগ বিবরণ
   let logDescription = `Status changed from ${prevStatus.toUpperCase()} to ${status.toUpperCase()} by ${user.name}.`;
   if (status === 'cancelled') {
     logDescription = `Order #${rawId} Cancelled. Reason: "${cancelReasonText}". Appended internal note to WooCommerce.`;
@@ -649,6 +707,10 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
   for (const id of order_ids) {
     const order = db.orders.find(o => o.id === id);
     if (order) {
+      // বাল্ক আপডেটেও কঠোর রুলস প্রটেকশন
+      const allowed = ALLOWED_TRANSITIONS[order.status] || [];
+      if (!allowed.includes(status)) continue;
+
       const prevStatus = order.status;
       order.status = status;
       order.updated_by_id = user.id;
@@ -774,7 +836,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
       return l.user_id === mod.id && logTime >= startMs && logTime <= endMs;
     });
     const confirmations = modLogs.filter(l => l.action_type === 'status_change' && l.description.includes('APPROVED')).length;
-    const edits = modLogs.filter(l => l.action_type === 'order_edit').length;
+    const edits = modLogs.filter(l => l.action_type === 'order_edit' || l.action_type === 'internal_note').length;
     const cancellations = modLogs.filter(l => l.action_type === 'cancelled').length;
     const total_actions = modLogs.length;
 
