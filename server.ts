@@ -230,8 +230,8 @@ app.post('/api/webhooks/woocommerce/simulate-test', authenticate, requireSuperAd
   });
 });
 
-// INBOUND WOOCOMMERCE WEBHOOK
-app.post('/api/webhooks/woocommerce/order-created', (req: Request, res: Response) => {
+// 2-WAY INBOUND WOOCOMMERCE WEBHOOK (ORDER CREATED & ORDER UPDATED)
+const handleWooCommerceWebhook = (req: Request, res: Response) => {
   const topic = req.headers['x-wc-webhook-topic'] as string | undefined;
 
   // WooCommerce Webhook Ping Acknowledgement
@@ -264,14 +264,19 @@ app.post('/api/webhooks/woocommerce/order-created', (req: Request, res: Response
     return res.status(400).json({ error: 'Invalid WooCommerce order payload. id is required.' });
   }
 
-  const newOrder = ingestWooCommerceOrder(payload);
+  const syncedOrder = ingestWooCommerceOrder(payload);
 
   return res.status(200).json({
     success: true,
-    message: `WooCommerce Order #${newOrder.id} successfully synced into SOMS.`,
-    orderId: newOrder.id,
+    message: `WooCommerce Order #${syncedOrder.id} successfully synced into SOMS.`,
+    orderId: syncedOrder.id,
+    status: syncedOrder.status,
   });
-});
+};
+
+// উভয় ইভেন্টই এখন হ্যান্ডেল হবে
+app.post('/api/webhooks/woocommerce/order-created', handleWooCommerceWebhook);
+app.post('/api/webhooks/woocommerce/order-updated', handleWooCommerceWebhook);
 
 // DYNAMIC CANCEL REASONS
 app.get('/api/cancel-reasons', authenticate, (_req: Request, res: Response) => {
