@@ -13,6 +13,9 @@ import {
   Package,
   RotateCw,
   CloudDownload,
+  Clock,
+  Calendar,
+  Hash,
 } from 'lucide-react';
 
 interface OrderTableProps {
@@ -36,9 +39,12 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
 
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
 
-  // Pull Order Modal State
+  // Pull Order Modal States
   const [isPullModalOpen, setIsPullModalOpen] = useState(false);
+  const [pullMode, setPullMode] = useState<'id' | 'last24' | 'custom'>('id');
   const [pullOrderIdInput, setPullOrderIdInput] = useState('');
+  const [pullStartDate, setPullStartDate] = useState('');
+  const [pullEndDate, setPullEndDate] = useState('');
   const [isPulling, setIsPulling] = useState(false);
 
   // Modals state
@@ -106,7 +112,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         prev.map(o => (o.id === orderId ? { ...o, status: nextStatus, updatedAt: new Date().toISOString() } : o))
       );
 
-      const res = await api.updateOrderStatus(orderId, nextStatus);
+      await api.updateOrderStatus(orderId, nextStatus);
       setNotification({ type: 'success', message: `Order #${orderId} updated to ${nextStatus.toUpperCase()}` });
       setTimeout(() => setNotification(null), 4000);
       fetchOrders(activeStatus, searchQuery, true);
@@ -139,15 +145,36 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     }
   };
 
-  // Pull Order Action
+  // Pull Order Action with Flexible Modes
   const handlePullOrderSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsPulling(true);
     try {
-      const res = await api.pullOrders(pullOrderIdInput.trim() || undefined);
+      let payload: any = {};
+
+      if (pullMode === 'id') {
+        if (!pullOrderIdInput.trim()) {
+          throw new Error('দয়া করে অর্ডার আইডিটি লিখুন (যেমন: 12463)।');
+        }
+        payload = { orderId: pullOrderIdInput.trim() };
+      } else if (pullMode === 'last24') {
+        payload = { hours: 24 };
+      } else if (pullMode === 'custom') {
+        if (!pullStartDate) {
+          throw new Error('শুরুর তারিখ ও সময় নির্বাচন করুন।');
+        }
+        payload = {
+          startDate: new Date(pullStartDate).toISOString(),
+          endDate: pullEndDate ? new Date(pullEndDate).toISOString() : undefined,
+        };
+      }
+
+      const res = await api.pullOrders(payload);
       setNotification({ type: 'success', message: res.message });
       setIsPullModalOpen(false);
       setPullOrderIdInput('');
+      setPullStartDate('');
+      setPullEndDate('');
       fetchOrders(activeStatus, searchQuery);
     } catch (err: any) {
       setNotification({ type: 'error', message: err.message || 'Pull order failed.' });
@@ -471,10 +498,10 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       </div>
 
-      {/* Pull Order Modal */}
+      {/* Advanced Pull Order Modal (Single ID, Last 24 Hours, Custom Range) */}
       {isPullModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="bg-[#161a26] border border-slate-800 rounded-xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+          <div className="bg-[#161a26] border border-slate-800 rounded-xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-white font-semibold text-sm">
                 <CloudDownload className="w-4 h-4 text-indigo-400" />
@@ -483,22 +510,102 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
               <button onClick={() => setIsPullModalOpen(false)} className="text-slate-400 hover:text-white">✕</button>
             </div>
 
+            {/* 3 Pull Modes Selection */}
+            <div className="grid grid-cols-3 gap-2 bg-slate-950 p-1 rounded-lg border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setPullMode('id')}
+                className={`py-1.5 text-xs font-medium rounded-md flex items-center justify-center gap-1.5 transition ${
+                  pullMode === 'id' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Hash className="w-3.5 h-3.5" />
+                <span>Order ID</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPullMode('last24')}
+                className={`py-1.5 text-xs font-medium rounded-md flex items-center justify-center gap-1.5 transition ${
+                  pullMode === 'last24' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Last 24 Hours</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPullMode('custom')}
+                className={`py-1.5 text-xs font-medium rounded-md flex items-center justify-center gap-1.5 transition ${
+                  pullMode === 'custom' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Custom Range</span>
+              </button>
+            </div>
+
             <form onSubmit={handlePullOrderSubmit} className="space-y-4">
-              <div>
-                <label className="text-xs text-slate-300 font-medium block mb-1.5">
-                  WooCommerce Order ID (ঐচ্ছিক)
-                </label>
-                <input
-                  type="text"
-                  placeholder="যেমন: 12463 (খালি রাখলে সর্বশেষ ২০টি অর্ডার টানবে)"
-                  value={pullOrderIdInput}
-                  onChange={(e) => setPullOrderIdInput(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                />
-                <p className="text-[11px] text-slate-500 mt-1.5">
-                  নির্দিষ্ট কোনো অর্ডারে সিংক সমস্যা হলে তার আইডি দিন, অথবা খালি রেখে সরাসরি <strong>Pull Now</strong> চাপুন।
-                </p>
-              </div>
+              {pullMode === 'id' && (
+                <div>
+                  <label className="text-xs text-slate-300 font-medium block mb-1.5">
+                    WooCommerce Order ID
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="যেমন: 12463"
+                    value={pullOrderIdInput}
+                    onChange={(e) => setPullOrderIdInput(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1.5">
+                    নির্দিষ্ট কোনো অর্ডার সিংক না হয়ে থাকলে তার আইডি দিন। ১ ক্লিকে সমস্ত তথ্য চলে আসবে।
+                  </p>
+                </div>
+              )}
+
+              {pullMode === 'last24' && (
+                <div className="p-3 bg-indigo-950/20 border border-indigo-900/40 rounded-lg text-xs space-y-1">
+                  <p className="font-semibold text-indigo-300 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4" />
+                    সর্বশেষ ২৪ ঘণ্টার সমস্ত অর্ডার সিংক হবে
+                  </p>
+                  <p className="text-slate-400 text-[11px]">
+                    WooCommerce থেকে গত ২৪ ঘণ্টার মধ্যে প্লেস করা সব নতুন অর্ডার সরাসরি টেনে আনবে। পুরনো অপ্রয়োজনীয় অর্ডার টেনে ডেটাবেজ স্লো করবে না।
+                  </p>
+                </div>
+              )}
+
+              {pullMode === 'custom' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs text-slate-300 font-medium block mb-1.5">
+                      শুরুর তারিখ ও সময় (From Date & Time)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      required
+                      value={pullStartDate}
+                      onChange={(e) => setPullStartDate(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-300 font-medium block mb-1.5">
+                      শেষ তারিখ ও সময় (To Date & Time - ঐচ্ছিক)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={pullEndDate}
+                      onChange={(e) => setPullEndDate(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    নির্দিষ্ট যেকোনো দিনের ২৪ ঘণ্টা সিলেক্ট করে ওই সময়ের অর্ডারগুলো টেনে আনতে পারেন।
+                  </p>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
                 <button
