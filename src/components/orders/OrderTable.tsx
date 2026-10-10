@@ -17,6 +17,11 @@ import {
   Calendar,
   Hash,
   ChevronDown,
+  PhoneCall,
+  Lock,
+  MessageSquare,
+  X,
+  Send,
 } from 'lucide-react';
 
 interface OrderTableProps {
@@ -64,7 +69,24 @@ const STATUS_CONFIG: Record<
   },
 };
 
-const STATUS_LIST: OrderStatus[] = ['pending', 'approved', 'hold', 'completed', 'cancelled'];
+// আপনার নির্ধারিত কঠোর স্ট্যাটাস রুলস
+const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  pending: ['approved', 'hold', 'cancelled'], // পেন্ডিং থেকে এপ্রুভ, হোল্ড ও ক্যানসেল
+  approved: ['completed'],                    // এপ্রুভ থেকে শুধুমাত্র কমপ্লিট
+  hold: ['approved', 'cancelled'],            // হোল্ড থেকে শুধুমাত্র এপ্রুভ ও ক্যানসেল
+  completed: [],                              // কমপ্লিট হলে লকড
+  cancelled: [],                              // ক্যানসেল হলে লকড
+};
+
+// দ্রুত কমেন্ট দেওয়ার প্রিসেট চিপস
+const QUICK_COMMENT_PRESETS = [
+  '📞 ১ম বার কল - রিসিভ করেনি',
+  '📞 ২য় বার কল - রিং হয়ে কেটে গেছে',
+  '⏰ পরে কল করতে বলেছে',
+  '💬 হোয়াটসঅ্যাপে মেসেজ পাঠানো হয়েছে',
+  '🚫 নম্বর বন্ধ / সংযোগ সম্ভব নয়',
+  '📍 ডেলিভারি ঠিকানা কনফার্ম করা হয়েছে',
+];
 
 export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -77,7 +99,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     cancelled: 0,
   });
 
-  // ডিফল্টভাবে 'pending' রাখা হয়েছে যাতে সাইটে ঢুকলে বা রিফ্রেশে পেন্ডিং অর্ডার দেখায়
   const [activeStatus, setActiveStatus] = useState<string>('pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -99,10 +120,14 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [auditingOrder, setAuditingOrder] = useState<Order | null>(null);
 
+  // Internal Comment Modal States
+  const [commentingOrder, setCommentingOrder] = useState<Order | null>(null);
+  const [commentText, setCommentText] = useState('');
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+
   const [copiedKeys, setCopiedKeys] = useState<{ [key: string]: boolean }>({});
   const [notification, setNotification] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
 
-  // বাইরে ক্লিক করলে ড্রপডাউন বন্ধ করার হ্যান্ডলার
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
       if (!(e.target as HTMLElement).closest('.status-dropdown-wrapper')) {
@@ -142,7 +167,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     fetchOrders(activeStatus, searchQuery);
     fetchCancelReasons();
 
-    // 5-second Silent Polling: নতুন অর্ডার রিফ্রেশ ছাড়াই টেবিলে অটো আসবে
     const pollTimer = setInterval(() => {
       fetchOrders(activeStatus, searchQuery, true);
     }, 5000);
@@ -166,6 +190,19 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
 
   const handleStatusChange = async (orderId: number, nextStatus: OrderStatus) => {
     setOpenDropdownOrderId(null);
+    const targetOrder = orders.find(o => o.id === orderId);
+    if (!targetOrder) return;
+
+    const allowed = ALLOWED_TRANSITIONS[targetOrder.status] || [];
+    if (!allowed.includes(nextStatus)) {
+      setNotification({
+        type: 'error',
+        message: `${targetOrder.status.toUpperCase()} থেকে ${nextStatus.toUpperCase()} এ স্ট্যাটাস নেওয়া অনুমোদিত নয়।`,
+      });
+      setTimeout(() => setNotification(null), 4000);
+      return;
+    }
+
     try {
       setOrders(prev =>
         prev.map(o => (o.id === orderId ? { ...o, status: nextStatus, updatedAt: new Date().toISOString() } : o))
@@ -204,7 +241,41 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     }
   };
 
-  // Pull Order Action with Flexible Modes
+  // ইন্টারনাল কমেন্ট সেভ করার সাবমিট হ্যান্ডলার
+  const handleSaveComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!commentingOrder || !commentText.trim()) return;
+    setIsSubmittingComment(true);
+
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('auth_token') || '';
+      const res = await fetch(`/api/orders/${commentingOrder.id}/notes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ note: commentText.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save comment');
+
+      setNotification({
+        type: 'success',
+        message: `Order #${commentingOrder.id}-এ ইন্টার্নাল নোট যুক্ত হয়েছে।`,
+      });
+      setTimeout(() => setNotification(null), 4000);
+      setCommentingOrder(null);
+      setCommentText('');
+      fetchOrders(activeStatus, searchQuery, true);
+    } catch (err: any) {
+      setNotification({ type: 'error', message: err.message || 'Failed to save comment' });
+    } finally {
+      setIsSubmittingComment(false);
+    }
+  };
+
   const handlePullOrderSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsPulling(true);
@@ -282,7 +353,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       )}
 
-      {/* Row 1: Status Filter Tabs (ডিফল্ট পেন্ডিং সিলেক্টেড থাকবে) */}
+      {/* Row 1: Status Filter Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 select-none">
         {[
           { key: 'pending', label: 'Pending', count: counts.pending },
@@ -332,7 +403,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
             <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
 
-          {/* Super Admin Pull Order Button */}
           <button
             onClick={() => setIsPullModalOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition shadow-xs"
@@ -347,7 +417,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
           </span>
         </div>
 
-        {/* High-speed Search Input */}
         <div className="relative flex-1 max-w-md">
           <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
@@ -438,6 +507,10 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   const isDropdownOpen = openDropdownOrderId === order.id;
                   const isNearBottom = index >= orders.length - 2 && orders.length > 3;
 
+                  // Completed বা Cancelled হলে ফাইনাল লক
+                  const isStatusLocked = order.status === 'completed' || order.status === 'cancelled';
+                  const availableTargets = ALLOWED_TRANSITIONS[order.status] || [];
+
                   return (
                     <tr
                       key={order.id}
@@ -471,11 +544,23 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                               {copiedKeys[nameKey] ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
                           </div>
+                          
+                          {/* ফোন নম্বর, ১-ক্লিক কপি এবং MicroSIP সরাসরি কল বাটন */}
                           <div className="flex items-center gap-1.5">
                             <span className="font-mono text-slate-400 text-xs">{order.phone}</span>
-                            <button onClick={() => handleCopy(phoneKey, cleanPhone)} className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800">
+                            
+                            <button onClick={() => handleCopy(phoneKey, cleanPhone)} className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800" title="Copy Number">
                               {copiedKeys[phoneKey] ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
+
+                            {/* MicroSIP / PC কলিং অ্যাপ ট্রিগার বাটন */}
+                            <a
+                              href={`tel:${cleanPhone}`}
+                              title={`Direct Call via MicroSIP (${cleanPhone})`}
+                              className="p-1 rounded text-slate-500 hover:text-emerald-400 hover:bg-emerald-950/50 transition cursor-pointer"
+                            >
+                              <PhoneCall className="w-3.5 h-3.5" />
+                            </a>
                           </div>
                         </div>
                       </td>
@@ -489,7 +574,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         </div>
                       </td>
 
-                      {/* Items & Size Display */}
                       <td className="py-3 px-3">
                         <div className="font-mono font-bold text-slate-100 tabular-nums">
                           {order.total_amount.toLocaleString()} ৳
@@ -498,7 +582,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                           {order.items_json?.length || 0} items · Ship: {order.shipping_fee} ৳
                         </div>
 
-                        {/* Line items with size badges */}
                         <div className="space-y-1 mt-1 max-w-[240px]">
                           {(order.items_json || []).map((item, idx) => (
                             <div key={idx} className="flex items-center gap-1.5 text-[11px] text-slate-300">
@@ -514,32 +597,41 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         </div>
                       </td>
 
-                      {/* Custom Dark Theme Status Dropdown (কোনো মিক্সড কালার বা নেটিভ সিলেক্ট ইস্যু নেই) */}
+                      {/* শর্তাধীন ও লকড স্ট্যাটাস ড্রপডাউন */}
                       <td className="py-3 px-3 whitespace-nowrap relative status-dropdown-wrapper">
                         <div className="relative inline-block text-left">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenDropdownOrderId(isDropdownOpen ? null : order.id);
-                            }}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition shadow-sm ${cfg.bgBtn}`}
-                          >
-                            <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-                            <span>{cfg.label}</span>
-                            <ChevronDown className="w-3.5 h-3.5 opacity-60 ml-0.5" />
-                          </button>
+                          {isStatusLocked ? (
+                            <div
+                              title={`${order.status.toUpperCase()} স্ট্যাটাস চূড়ান্ত এবং লকড রয়েছে।`}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-not-allowed opacity-85 select-none ${cfg.bgBtn}`}
+                            >
+                              <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                              <span>{cfg.label}</span>
+                              <Lock className="w-3 h-3 opacity-60 ml-0.5 text-slate-400" />
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenDropdownOrderId(isDropdownOpen ? null : order.id);
+                              }}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition shadow-sm ${cfg.bgBtn}`}
+                            >
+                              <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                              <span>{cfg.label}</span>
+                              <ChevronDown className="w-3.5 h-3.5 opacity-60 ml-0.5" />
+                            </button>
+                          )}
 
-                          {/* কাস্টম পপআপ লিস্ট */}
-                          {isDropdownOpen && (
+                          {isDropdownOpen && !isStatusLocked && (
                             <div
                               className={`absolute left-0 ${
                                 isNearBottom ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
                               } w-36 bg-[#0c101c] border border-slate-700/90 rounded-xl shadow-2xl py-1 z-50 backdrop-blur-md animate-in fade-in zoom-in-95`}
                             >
-                              {STATUS_LIST.map((stKey) => {
+                              {availableTargets.map((stKey) => {
                                 const stCfg = STATUS_CONFIG[stKey];
-                                const isCurrent = order.status === stKey;
 
                                 return (
                                   <button
@@ -554,15 +646,12 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                                         handleStatusChange(order.id, stKey);
                                       }
                                     }}
-                                    className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium transition ${
-                                      stCfg.hoverBg
-                                    } ${isCurrent ? 'bg-slate-800/80 font-semibold' : ''}`}
+                                    className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium transition ${stCfg.hoverBg}`}
                                   >
                                     <div className="flex items-center gap-2">
                                       <span className={`w-2 h-2 rounded-full ${stCfg.dot}`} />
                                       <span className={stCfg.text}>{stCfg.label}</span>
                                     </div>
-                                    {isCurrent && <Check className="w-3.5 h-3.5 text-slate-300" />}
                                   </button>
                                 );
                               })}
@@ -571,12 +660,36 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         </div>
                       </td>
 
+                      {/* Actions: Edit, Internal Comment/Note, Audit History */}
                       <td className="py-3 px-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button onClick={() => setEditingOrder(order)} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white">
+                          {/* ১। এডিট বাটন */}
+                          <button
+                            onClick={() => setEditingOrder(order)}
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
+                            title="Edit Order"
+                          >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => handleOpenAudit(order)} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-indigo-400">
+
+                          {/* ২। ইন্টার্নাল কমেন্ট / কলিং নোট বাটন (সব স্ট্যাটাসেই উন্মুক্ত) */}
+                          <button
+                            onClick={() => {
+                              setCommentingOrder(order);
+                              setCommentText('');
+                            }}
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 transition"
+                            title="Add Internal Call Note / Comment"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* ৩। হিস্ট্রি ও অডিট টাইমলাইন বাটন */}
+                          <button
+                            onClick={() => handleOpenAudit(order)}
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-indigo-400 transition"
+                            title="View Audit Timeline & Comments Log"
+                          >
                             <History className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -590,6 +703,94 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       </div>
 
+      {/* Internal Comments / Call Notes Modal */}
+      {commentingOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-[#121624] border border-slate-800 rounded-xl max-w-md w-full shadow-2xl overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-950/60">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-950/60 border border-amber-800/80 flex items-center justify-center text-amber-400">
+                  <MessageSquare className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-white">
+                    Add Call Note / Comment #{commentingOrder.id}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {commentingOrder.customer_name} ({commentingOrder.phone})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCommentingOrder(null)}
+                className="text-slate-400 hover:text-white p-1 rounded transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveComment} className="p-5 space-y-4">
+              {/* Quick Preset Buttons */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1.5">
+                  Quick Presets (1-Tap Selection):
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {QUICK_COMMENT_PRESETS.map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setCommentText(prev => (prev ? `${prev}; ${preset}` : preset))}
+                      className="px-2 py-1 text-[11px] rounded bg-slate-900 border border-slate-800 hover:border-amber-500/50 hover:text-amber-300 text-slate-300 transition text-left"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Textarea */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Comment / Internal Notes:
+                </label>
+                <textarea
+                  rows={3}
+                  value={commentText}
+                  onChange={e => setCommentText(e.target.value)}
+                  placeholder="যেমন: ৩য় বার কল করা হয়েছে, কাস্টমার বলেছে সন্ধ্যা ৭টায় ডেলিভারি কনফার্ম করবে..."
+                  required
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-1 focus:ring-amber-500 transition resize-none placeholder-slate-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setCommentingOrder(null)}
+                  disabled={isSubmittingComment}
+                  className="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white bg-slate-850 hover:bg-slate-800 rounded-lg transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingComment || !commentText.trim()}
+                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-500 rounded-lg transition shadow-sm disabled:opacity-50"
+                >
+                  {isSubmittingComment ? (
+                    <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Send className="w-3.5 h-3.5" />
+                  )}
+                  <span>Save Note</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Advanced Pull Order Modal */}
       {isPullModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
@@ -602,7 +803,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
               <button onClick={() => setIsPullModalOpen(false)} className="text-slate-400 hover:text-white">✕</button>
             </div>
 
-            {/* 3 Pull Modes Selection */}
             <div className="grid grid-cols-3 gap-2 bg-slate-950 p-1 rounded-lg border border-slate-800">
               <button
                 type="button"
@@ -650,9 +850,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                     onChange={(e) => setPullOrderIdInput(e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
-                  <p className="text-[11px] text-slate-500 mt-1.5">
-                    নির্দিষ্ট কোনো অর্ডার সিংক না হয়ে থাকলে তার আইডি দিন। ১ ক্লিকে সমস্ত তথ্য চলে আসবে।
-                  </p>
                 </div>
               )}
 
@@ -661,9 +858,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   <p className="font-semibold text-indigo-300 flex items-center gap-1.5">
                     <Clock className="w-4 h-4" />
                     সর্বশেষ ২৪ ঘণ্টার সমস্ত অর্ডার সিংক হবে
-                  </p>
-                  <p className="text-slate-400 text-[11px]">
-                    WooCommerce থেকে গত ২৪ ঘণ্টার মধ্যে প্লেস করা সব নতুন অর্ডার সরাসরি টেনে আনবে। পুরনো অপ্রয়োজনীয় অর্ডার টেনে ডেটাবেজ স্লো করবে না।
                   </p>
                 </div>
               )}
@@ -693,9 +887,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                       className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   </div>
-                  <p className="text-[11px] text-slate-500">
-                    নির্দিষ্ট যেকোনো দিনের ২৪ ঘণ্টা সিলেক্ট করে ওই সময়ের অর্ডারগুলো টেনে আনতে পারেন।
-                  </p>
                 </div>
               )}
 
