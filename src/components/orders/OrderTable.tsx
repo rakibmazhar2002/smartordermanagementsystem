@@ -12,6 +12,7 @@ import {
   History,
   Package,
   RotateCw,
+  CloudDownload,
 } from 'lucide-react';
 
 interface OrderTableProps {
@@ -33,22 +34,23 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [cancelReasons, setCancelReasons] = useState<CancelReason[]>([]);
 
-  // Selection for bulk actions
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
+
+  // Pull Order Modal State
+  const [isPullModalOpen, setIsPullModalOpen] = useState(false);
+  const [pullOrderIdInput, setPullOrderIdInput] = useState('');
+  const [isPulling, setIsPulling] = useState(false);
 
   // Modals state
   const [cancellingOrder, setCancellingOrder] = useState<Order | null>(null);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [auditingOrder, setAuditingOrder] = useState<Order | null>(null);
 
-  // 1-Click Copy feedback tracker: key -> boolean
   const [copiedKeys, setCopiedKeys] = useState<{ [key: string]: boolean }>({});
-
-  // Notification Banner
   const [notification, setNotification] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
 
-  const fetchOrders = async (statusTab = activeStatus, search = searchQuery) => {
-    setIsLoading(true);
+  const fetchOrders = async (statusTab = activeStatus, search = searchQuery, silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const res = await api.getOrders({
         status: statusTab === 'all' ? undefined : statusTab,
@@ -57,9 +59,9 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
       setOrders(res.orders);
       setCounts(res.counts);
     } catch (err: any) {
-      console.error('Failed to fetch orders:', err);
+      if (!silent) console.error('Failed to fetch orders:', err);
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   };
 
@@ -75,16 +77,21 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   useEffect(() => {
     fetchOrders(activeStatus, searchQuery);
     fetchCancelReasons();
-  }, [activeStatus, onRefreshTrigger]);
 
-  // Handle Search submit
+    // 5-second Silent Polling: নতুন অর্ডার রিফ্রেশ ছাড়াই টেবিলে অটো আসবে
+    const pollTimer = setInterval(() => {
+      fetchOrders(activeStatus, searchQuery, true);
+    }, 5000);
+
+    return () => clearInterval(pollTimer);
+  }, [activeStatus, searchQuery, onRefreshTrigger]);
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setSearchQuery(val);
     fetchOrders(activeStatus, val);
   };
 
-  // 1-Click Clipboard Copy Handler with 1.5s morphing checkmark feedback
   const handleCopy = (copyKey: string, textToCopy: string) => {
     navigator.clipboard.writeText(textToCopy);
     setCopiedKeys(prev => ({ ...prev, [copyKey]: true }));
@@ -93,54 +100,36 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     }, 1500);
   };
 
-  // Status transitions
   const handleStatusChange = async (orderId: number, nextStatus: OrderStatus) => {
     try {
-      // Optimistic update
       setOrders(prev =>
         prev.map(o => (o.id === orderId ? { ...o, status: nextStatus, updatedAt: new Date().toISOString() } : o))
       );
 
       const res = await api.updateOrderStatus(orderId, nextStatus);
-
-      let msg = `Order #${orderId} set to ${nextStatus.toUpperCase()}`;
-      if (res.syncResult?.metaCapiTriggered) {
-        msg += ' · Dispatched WooCommerce Meta CAPI Purchase Dispatcher!';
-      }
-      setNotification({ type: 'success', message: msg });
+      setNotification({ type: 'success', message: `Order #${orderId} updated to ${nextStatus.toUpperCase()}` });
       setTimeout(() => setNotification(null), 4000);
-
-      // Refresh to keep server counts synchronized
-      fetchOrders(activeStatus, searchQuery);
+      fetchOrders(activeStatus, searchQuery, true);
     } catch (err: any) {
       setNotification({ type: 'error', message: err.message || 'Failed to update order status' });
       fetchOrders(activeStatus, searchQuery);
     }
   };
 
-  // Confirm Cancellation with mandatory root cause
   const handleConfirmCancel = async (orderId: number, reasonId: string) => {
-    const res = await api.updateOrderStatus(orderId, 'cancelled', reasonId);
-    setNotification({
-      type: 'info',
-      message: `Order #${orderId} Cancelled. Dispatched to WooCommerce with internal note.`,
-    });
+    await api.updateOrderStatus(orderId, 'cancelled', reasonId);
+    setNotification({ type: 'info', message: `Order #${orderId} Cancelled.` });
     setTimeout(() => setNotification(null), 4000);
-    fetchOrders(activeStatus, searchQuery);
+    fetchOrders(activeStatus, searchQuery, true);
   };
 
-  // Save Edit Order
   const handleSaveEdit = async (orderId: number, data: any) => {
-    const res = await api.updateOrderDetails(orderId, data);
-    setNotification({
-      type: 'success',
-      message: `Order #${orderId} updated successfully. Dispatched PUT payload to WooCommerce.`,
-    });
+    await api.updateOrderDetails(orderId, data);
+    setNotification({ type: 'success', message: `Order #${orderId} updated successfully.` });
     setTimeout(() => setNotification(null), 4000);
-    fetchOrders(activeStatus, searchQuery);
+    fetchOrders(activeStatus, searchQuery, true);
   };
 
-  // Open Audit Log
   const handleOpenAudit = async (order: Order) => {
     try {
       const fullOrder = await api.getOrder(order.id);
@@ -150,39 +139,46 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     }
   };
 
-  // Bulk Actions
+  // Pull Order Action
+  const handlePullOrderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsPulling(true);
+    try {
+      const res = await api.pullOrders(pullOrderIdInput.trim() || undefined);
+      setNotification({ type: 'success', message: res.message });
+      setIsPullModalOpen(false);
+      setPullOrderIdInput('');
+      fetchOrders(activeStatus, searchQuery);
+    } catch (err: any) {
+      setNotification({ type: 'error', message: err.message || 'Pull order failed.' });
+    } finally {
+      setIsPulling(false);
+    }
+  };
+
   const handleBulkStatus = async (status: OrderStatus) => {
     if (selectedOrderIds.length === 0) return;
     try {
       const res = await api.bulkUpdateStatus(selectedOrderIds, status);
-      setNotification({
-        type: 'success',
-        message: `Updated ${res.count} orders to ${status.toUpperCase()} and queued WooCommerce sync.`,
-      });
+      setNotification({ type: 'success', message: `Updated ${res.count} orders.` });
       setSelectedOrderIds([]);
-      fetchOrders(activeStatus, searchQuery);
+      fetchOrders(activeStatus, searchQuery, true);
     } catch (err: any) {
       setNotification({ type: 'error', message: err.message || 'Bulk update failed' });
     }
   };
 
   const toggleSelectAll = () => {
-    if (selectedOrderIds.length === orders.length) {
-      setSelectedOrderIds([]);
-    } else {
-      setSelectedOrderIds(orders.map(o => o.id));
-    }
+    if (selectedOrderIds.length === orders.length) setSelectedOrderIds([]);
+    else setSelectedOrderIds(orders.map(o => o.id));
   };
 
   const toggleSelectOrder = (id: number) => {
-    setSelectedOrderIds(prev =>
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
+    setSelectedOrderIds(prev => (prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]));
   };
 
   return (
     <div className="space-y-4">
-      {/* Toast Notification */}
       {notification && (
         <div
           className={`p-3 rounded-lg text-xs font-medium flex items-center justify-between border ${
@@ -194,16 +190,13 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
           }`}
         >
           <span>{notification.message}</span>
-          <button
-            onClick={() => setNotification(null)}
-            className="text-slate-400 hover:text-white ml-2 text-xs"
-          >
+          <button onClick={() => setNotification(null)} className="text-slate-400 hover:text-white ml-2 text-xs">
             ✕
           </button>
         </div>
       )}
 
-      {/* Row 1: Large Boxed Status Filters (Reference Dashboard Style) */}
+      {/* Row 1: Status Filter Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 select-none">
         {[
           { key: 'all', label: 'All', count: counts.all },
@@ -214,7 +207,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
           { key: 'cancelled', label: 'Cancelled', count: counts.cancelled },
         ].map(tab => {
           const isActive = activeStatus === tab.key;
-
           return (
             <button
               key={tab.key}
@@ -229,8 +221,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
               }`}
             >
               <span className="font-medium">{tab.label}</span>
-              
-              {/* Reference Style Count Badge */}
               <span
                 className={`font-mono text-[11px] tabular-nums px-2 py-0.5 rounded border ${
                   isActive
@@ -255,7 +245,18 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
           >
             <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
-          <span className="text-xs text-slate-400 font-medium hidden sm:inline">
+
+          {/* Super Admin Pull Order Button */}
+          <button
+            onClick={() => setIsPullModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition shadow-xs"
+            title="Sync Missed Orders Directly from WooCommerce"
+          >
+            <CloudDownload className="w-4 h-4" />
+            <span>Pull Order</span>
+          </button>
+
+          <span className="text-xs text-slate-400 font-medium hidden sm:inline ml-1">
             Showing <strong className="text-white font-mono">{orders.length}</strong> orders
           </span>
         </div>
@@ -267,7 +268,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
             type="text"
             value={searchQuery}
             onChange={handleSearchChange}
-            placeholder="Type invoice or customer phone / name..."
+            placeholder="Search by #Order ID, Phone, Customer..."
             className="w-full pl-9 pr-8 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-teal-500 transition"
           />
           {searchQuery && (
@@ -284,44 +285,22 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       </div>
 
-      {/* Bulk Operations Toolbar (Visible when rows selected) */}
+      {/* Bulk Operations Toolbar */}
       {selectedOrderIds.length > 0 && (
-        <div className="flex items-center justify-between p-2.5 bg-indigo-950/40 border border-indigo-800/60 rounded-lg text-xs text-indigo-200 animate-in fade-in">
+        <div className="flex items-center justify-between p-2.5 bg-indigo-950/40 border border-indigo-800/60 rounded-lg text-xs text-indigo-200">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-white">{selectedOrderIds.length} orders selected</span>
-            <span className="text-indigo-400">· Ready for bulk operation</span>
           </div>
-
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleBulkStatus('approved')}
-              className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition"
-            >
-              Bulk Approve
-            </button>
-            <button
-              onClick={() => handleBulkStatus('hold')}
-              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium transition"
-            >
-              Bulk Hold
-            </button>
-            <button
-              onClick={() => handleBulkStatus('completed')}
-              className="px-2.5 py-1 rounded bg-cyan-700 hover:bg-cyan-600 text-white font-medium transition"
-            >
-              Bulk Complete
-            </button>
-            <button
-              onClick={() => setSelectedOrderIds([])}
-              className="px-2.5 py-1 rounded text-slate-400 hover:text-white transition"
-            >
-              Cancel Selection
-            </button>
+            <button onClick={() => handleBulkStatus('approved')} className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium">Bulk Approve</button>
+            <button onClick={() => handleBulkStatus('hold')} className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium">Bulk Hold</button>
+            <button onClick={() => handleBulkStatus('completed')} className="px-2.5 py-1 rounded bg-cyan-700 hover:bg-cyan-600 text-white font-medium">Bulk Complete</button>
+            <button onClick={() => setSelectedOrderIds([])} className="px-2.5 py-1 rounded text-slate-400 hover:text-white">Cancel</button>
           </div>
         </div>
       )}
 
-      {/* High-Density Order Table */}
+      {/* Orders Table */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -338,9 +317,9 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                 <th className="py-3 px-3">Order ID</th>
                 <th className="py-3 px-3">Customer Details & 1-Click Copy</th>
                 <th className="py-3 px-3">Delivery Address</th>
-                <th className="py-3 px-3">Items & Total</th>
+                <th className="py-3 px-3">Items & Size Details</th>
                 <th className="py-3 px-3">Status</th>
-                <th className="py-3 px-3 text-right">Quick Operations</th>
+                <th className="py-3 px-3 text-right">Actions</th>
               </tr>
             </thead>
 
@@ -350,20 +329,15 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   <td colSpan={7} className="py-12 text-center text-slate-500">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <div className="w-5 h-5 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
-                      <span>Loading high-concurrency order ledger...</span>
+                      <span>Loading orders ledger...</span>
                     </div>
                   </td>
                 </tr>
               ) : orders.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-12 text-center text-slate-500">
-                    <div className="max-w-xs mx-auto space-y-2">
-                      <Package className="w-8 h-8 text-slate-600 mx-auto" />
-                      <p className="text-slate-300 font-medium">No matching orders found</p>
-                      <p className="text-xs text-slate-500">
-                        Try adjusting your search query or status filter.
-                      </p>
-                    </div>
+                    <Package className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                    <p className="text-slate-300 font-medium">No matching orders found</p>
                   </td>
                 </tr>
               ) : (
@@ -372,7 +346,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   const nameKey = `name_${order.id}`;
                   const phoneKey = `phone_${order.id}`;
                   const addrKey = `addr_${order.id}`;
-
                   const cleanPhone = order.phone.replace(/[^0-9+]/g, '');
 
                   return (
@@ -382,7 +355,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         isSelected ? 'bg-indigo-950/20' : ''
                       }`}
                     >
-                      {/* Checkbox */}
                       <td className="py-3 px-3 text-center">
                         <input
                           type="checkbox"
@@ -392,114 +364,75 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         />
                       </td>
 
-                      {/* STRICT ORDER ID: Native WooCommerce ID Solely (#7103) */}
                       <td className="py-3 px-3 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-bold text-sm text-indigo-400 tabular-nums">
-                            #{order.id}
-                          </span>
-                        </div>
+                        <span className="font-mono font-bold text-sm text-indigo-400 tabular-nums">
+                          #{order.id}
+                        </span>
                         <div className="text-[10px] text-slate-500 font-mono tabular-nums">
                           {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </td>
 
-                      {/* Customer Details with 1-Click Copy Buttons */}
                       <td className="py-3 px-3">
                         <div className="space-y-1">
                           <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-slate-200 truncate max-w-[160px]">
-                              {order.customer_name}
-                            </span>
-                            <button
-                              onClick={() => handleCopy(nameKey, order.customer_name)}
-                              title="Copy Customer Name"
-                              className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition"
-                            >
-                              {copiedKeys[nameKey] ? (
-                                <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-400">
-                                  <Check className="w-3.5 h-3.5" />
-                                  <span>Copied!</span>
-                                </span>
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
+                            <span className="font-semibold text-slate-200 truncate max-w-[160px]">{order.customer_name}</span>
+                            <button onClick={() => handleCopy(nameKey, order.customer_name)} className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800">
+                              {copiedKeys[nameKey] ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
                           </div>
-
                           <div className="flex items-center gap-1.5">
-                            <span className="font-mono text-slate-400 text-xs">
-                              {order.phone}
-                            </span>
-                            <button
-                              onClick={() => handleCopy(phoneKey, cleanPhone)}
-                              title="Copy Sanitized Phone Number"
-                              className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition"
-                            >
-                              {copiedKeys[phoneKey] ? (
-                                <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-400">
-                                  <Check className="w-3.5 h-3.5" />
-                                  <span>Copied!</span>
-                                </span>
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
+                            <span className="font-mono text-slate-400 text-xs">{order.phone}</span>
+                            <button onClick={() => handleCopy(phoneKey, cleanPhone)} className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800">
+                              {copiedKeys[phoneKey] ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
                           </div>
                         </div>
                       </td>
 
-                      {/* Delivery Address with 1-Click Copy */}
                       <td className="py-3 px-3 max-w-[240px]">
-                        <div className="flex items-start gap-1.5 group/addr">
-                          <span className="text-slate-300 text-xs leading-snug line-clamp-2">
-                            {order.address}
-                          </span>
-                          <button
-                            onClick={() => handleCopy(addrKey, order.address)}
-                            title="Copy Full Delivery Address"
-                            className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition shrink-0"
-                          >
-                            {copiedKeys[addrKey] ? (
-                              <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-400">
-                                <Check className="w-3.5 h-3.5" />
-                                  <span>Copied!</span>
-                              </span>
-                            ) : (
-                              <Copy className="w-3.5 h-3.5" />
-                            )}
+                        <div className="flex items-start gap-1.5">
+                          <span className="text-slate-300 text-xs leading-snug line-clamp-2">{order.address}</span>
+                          <button onClick={() => handleCopy(addrKey, order.address)} className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800 shrink-0">
+                            {copiedKeys[addrKey] ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                           </button>
                         </div>
                       </td>
 
-                      {/* Items & Total */}
-                      <td className="py-3 px-3 whitespace-nowrap">
+                      {/* Items & Size Display */}
+                      <td className="py-3 px-3">
                         <div className="font-mono font-bold text-slate-100 tabular-nums">
                           {order.total_amount.toLocaleString()} ৳
                         </div>
                         <div className="text-[11px] text-slate-400">
                           {order.items_json?.length || 0} items · Ship: {order.shipping_fee} ৳
                         </div>
-                        {order.items_json && order.items_json[0] && (
-                          <div className="text-[10px] text-slate-500 truncate max-w-[150px]">
-                            {order.items_json[0].name} ({order.items_json[0].quantity}x)
-                          </div>
-                        )}
+
+                        {/* Line items with size badges */}
+                        <div className="space-y-1 mt-1 max-w-[240px]">
+                          {(order.items_json || []).map((item, idx) => (
+                            <div key={idx} className="flex items-center gap-1.5 text-[11px] text-slate-300">
+                              <span className="truncate">{item.name}</span>
+                              <span className="font-mono text-slate-500">x{item.quantity}</span>
+                              {item.variation && (
+                                <span className="px-1.5 py-0.2 rounded bg-indigo-950 border border-indigo-700/70 text-indigo-300 font-bold text-[10px] whitespace-nowrap">
+                                  {item.variation}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </td>
 
-                      {/* Status Dropdown */}
                       <td className="py-3 px-3 whitespace-nowrap">
                         <select
                           value={order.status}
                           onChange={(e) => {
                             const newStatus = e.target.value as OrderStatus;
-                            if (newStatus === 'cancelled') {
-                              setCancellingOrder(order);
-                            } else {
-                              handleStatusChange(order.id, newStatus);
-                            }
+                            if (newStatus === 'cancelled') setCancellingOrder(order);
+                            else handleStatusChange(order.id, newStatus);
                           }}
-                          className={`text-xs font-semibold rounded-lg px-2.5 py-1 border focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer transition ${
+                          className={`text-xs font-semibold rounded-lg px-2.5 py-1 border cursor-pointer transition ${
                             order.status === 'pending'
                               ? 'bg-amber-950/40 border-amber-900/60 text-amber-400'
                               : order.status === 'approved'
@@ -511,38 +444,20 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                               : 'bg-red-950/40 border-red-900/60 text-red-400'
                           }`}
                         >
-                          <option value="pending" className="bg-slate-900 text-amber-400 font-semibold">Pending</option>
-                          <option value="approved" className="bg-slate-900 text-emerald-400 font-semibold">Approved</option>
-                          <option value="hold" className="bg-slate-900 text-indigo-400 font-semibold">On Hold</option>
-                          <option value="completed" className="bg-slate-900 text-cyan-400 font-semibold">Completed</option>
-                          <option value="cancelled" className="bg-slate-900 text-red-400 font-semibold">Cancelled</option>
+                          <option value="pending">Pending</option>
+                          <option value="approved">Approved</option>
+                          <option value="hold">On Hold</option>
+                          <option value="completed">Completed</option>
+                          <option value="cancelled">Cancelled</option>
                         </select>
-
-                        {order.cancel_reason && (
-                          <div className="text-[10px] text-red-400 mt-1 truncate max-w-[120px]" title={order.cancel_reason.reason_text}>
-                            {order.cancel_reason.reason_text}
-                          </div>
-                        )}
                       </td>
 
-                      {/* Quick Operations: Only Edit & History Logs */}
                       <td className="py-3 px-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          {/* Edit Details */}
-                          <button
-                            onClick={() => setEditingOrder(order)}
-                            title="Edit Order Details & Items"
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition shadow-sm"
-                          >
+                          <button onClick={() => setEditingOrder(order)} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white">
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
-
-                          {/* Audit Timeline */}
-                          <button
-                            onClick={() => handleOpenAudit(order)}
-                            title="View Chronological Audit Timeline"
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-indigo-400 transition shadow-sm"
-                          >
+                          <button onClick={() => handleOpenAudit(order)} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-indigo-400">
                             <History className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -554,20 +469,59 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
             </tbody>
           </table>
         </div>
-
-        {/* Table Footer Stats */}
-        <div className="px-4 py-3 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
-          <div>
-            Showing <span className="font-mono font-semibold text-slate-200">{orders.length}</span> orders
-            {activeStatus !== 'all' && <span> in status <span className="capitalize text-teal-400 font-medium">{activeStatus}</span></span>}
-          </div>
-          <div className="font-mono text-[11px] text-slate-500">
-            Zero-Latency SOMS · Two-Way WC Sync Active
-          </div>
-        </div>
       </div>
 
-      {/* Cancellation Modal */}
+      {/* Pull Order Modal */}
+      {isPullModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
+          <div className="bg-[#161a26] border border-slate-800 rounded-xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-white font-semibold text-sm">
+                <CloudDownload className="w-4 h-4 text-indigo-400" />
+                <span>Pull Orders from WooCommerce</span>
+              </div>
+              <button onClick={() => setIsPullModalOpen(false)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+
+            <form onSubmit={handlePullOrderSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs text-slate-300 font-medium block mb-1.5">
+                  WooCommerce Order ID (ঐচ্ছিক)
+                </label>
+                <input
+                  type="text"
+                  placeholder="যেমন: 12463 (খালি রাখলে সর্বশেষ ২০টি অর্ডার টানবে)"
+                  value={pullOrderIdInput}
+                  onChange={(e) => setPullOrderIdInput(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  নির্দিষ্ট কোনো অর্ডারে সিংক সমস্যা হলে তার আইডি দিন, অথবা খালি রেখে সরাসরি <strong>Pull Now</strong> চাপুন।
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsPullModalOpen(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-white rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPulling}
+                  className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isPulling && <RotateCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{isPulling ? 'Pulling...' : 'Pull Now'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {cancellingOrder && (
         <CancelOrderModal
           order={cancellingOrder}
@@ -578,7 +532,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         />
       )}
 
-      {/* Edit Order Modal */}
       {editingOrder && (
         <EditOrderModal
           order={editingOrder}
@@ -588,7 +541,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         />
       )}
 
-      {/* Audit Timeline Modal */}
       {auditingOrder && (
         <AuditTimelineModal
           order={auditingOrder}
