@@ -670,7 +670,7 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
   return res.json({ success: true, count: updatedCount });
 });
 
-// ANALYTICS DASHBOARD (বাংলাদেশ টাইমজোন + নিখুঁত রেঞ্জ ফিল্টারিং)
+// ANALYTICS DASHBOARD (Meta CAPI by Order Date & Cancellations by Modified Date)
 app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: Response) => {
   const db = getDb();
   const range = (req.query.range as string) || 'today';
@@ -678,7 +678,6 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const customEnd = req.query.endDate as string | undefined;
 
   const now = new Date();
-  // বাংলাদেশ টাইমজোন (UTC+6) রূপান্তর
   const BD_OFFSET_MS = 6 * 60 * 60 * 1000;
   const bdNow = new Date(now.getTime() + BD_OFFSET_MS);
 
@@ -686,7 +685,6 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const m = bdNow.getUTCMonth();
   const d = bdNow.getUTCDate();
 
-  // নির্দিষ্ট দিন ও সময়ের জন্য সঠিক UTC টাইম নির্ধারণ
   const makeBdUtc = (year: number, month: number, day: number, hours: number, minutes: number, seconds: number, ms: number) => {
     return new Date(Date.UTC(year, month, day, hours, minutes, seconds, ms) - BD_OFFSET_MS);
   };
@@ -695,19 +693,15 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   let endTime: Date;
 
   if (range === 'today') {
-    // আজকের ০০:০০:০০ থেকে রাত ২৩:৫৯:৫৯
     startTime = makeBdUtc(y, m, d, 0, 0, 0, 0);
     endTime = makeBdUtc(y, m, d, 23, 59, 59, 999);
   } else if (range === 'yesterday') {
-    // শুধুমাত্র গতকালের ০০:০০:০০ থেকে গতকাল রাত ২৩:৫৯:৫৯ (আজকের কোনো ডেটা আসবে না)
     startTime = makeBdUtc(y, m, d - 1, 0, 0, 0, 0);
     endTime = makeBdUtc(y, m, d - 1, 23, 59, 59, 999);
   } else if (range === 'last7days') {
-    // গত ৭ দিন (শুরু থেকে আজকের শেষ পর্যন্ত)
     startTime = makeBdUtc(y, m, d - 6, 0, 0, 0, 0);
     endTime = makeBdUtc(y, m, d, 23, 59, 59, 999);
   } else if (range === 'thismonth') {
-    // চলতি মাসের ১ তারিখ থেকে আজকের শেষ পর্যন্ত
     startTime = makeBdUtc(y, m, 1, 0, 0, 0, 0);
     endTime = makeBdUtc(y, m, d, 23, 59, 59, 999);
   } else if (range === 'custom' && customStart) {
@@ -726,38 +720,47 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const startMs = startTime.getTime();
   const endMs = endTime.getTime();
 
-  // ফিল্টার করা অর্ডার তালিকা
-  const scopedOrders = db.orders.filter(o => {
+  // ১. মেটা সিএপিআই এবং পাইপলাইন ভলিউম: ফিল্টার হবে অর্ডার ক্রিয়েট ডেট (createdAt) দিয়ে
+  const createdOrders = db.orders.filter(o => {
     const t = new Date(o.createdAt).getTime();
     return !isNaN(t) && t >= startMs && t <= endMs;
   });
 
-  const total = scopedOrders.length || 1;
-  const pending = scopedOrders.filter(o => o.status === 'pending').length;
-  const approved = scopedOrders.filter(o => o.status === 'approved').length;
-  const hold = scopedOrders.filter(o => o.status === 'hold').length;
-  const completed = scopedOrders.filter(o => o.status === 'completed').length;
-  const cancelled = scopedOrders.filter(o => o.status === 'cancelled').length;
+  const total = createdOrders.length || 1;
+  const pending = createdOrders.filter(o => o.status === 'pending').length;
+  const approved = createdOrders.filter(o => o.status === 'approved').length;
+  const hold = createdOrders.filter(o => o.status === 'hold').length;
+  
+  // মেটা সিএপিআই পারচেজ: এই তারিখে তৈরি করা অর্ডার যা কমপ্লিট হয়েছে (অ্যাড ম্যানেজারের সাথে মিলবে)
+  const completed = createdOrders.filter(o => o.status === 'completed').length;
 
-  const grossRevenue = scopedOrders
+  const grossRevenue = createdOrders
     .filter(o => o.status === 'approved' || o.status === 'completed')
     .reduce((sum, o) => sum + o.total_amount, 0);
 
+  // ২. ক্যানসেলেশন ও রুট-কজ: ফিল্টার হবে মডিফাইড/অ্যাকশন ডেট (updatedAt) দিয়ে
+  const cancelledInWindow = db.orders.filter(o => {
+    if (o.status !== 'cancelled') return false;
+    const actionTime = new Date(o.updatedAt || o.createdAt).getTime();
+    return !isNaN(actionTime) && actionTime >= startMs && actionTime <= endMs;
+  });
+
   const pulse = {
-    total: scopedOrders.length,
+    total: createdOrders.length,
     pending,
     approved,
     hold,
     completed,
-    cancelled,
+    cancelled: cancelledInWindow.length,
     pendingPercent: Math.round((pending / total) * 100),
     approvedPercent: Math.round((approved / total) * 100),
     holdPercent: Math.round((hold / total) * 100),
     completedPercent: Math.round((completed / total) * 100),
-    cancelledPercent: Math.round((cancelled / total) * 100),
+    cancelledPercent: Math.round((cancelledInWindow.length / total) * 100),
     grossRevenue,
   };
 
+  // ৩. মডারেটর পারফরম্যান্স: ফিল্টার হবে লগ অ্যাকশন টাইম (timestamp) দিয়ে
   const moderators = db.users.filter(u => u.role === 'moderator' || u.role === 'super_admin');
   const moderatorPerformance = moderators.map(mod => {
     const modLogs = db.activityLogs.filter(l => {
@@ -780,11 +783,11 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     };
   });
 
-  const cancelledOrders = scopedOrders.filter(o => o.status === 'cancelled');
+  // রুট কজ ব্রেকডাউন (মডিফাইড ডেটের ক্যানসেলেশনের ভিত্তিতে)
   const cancelReasonsMap = new Map(db.cancelReasons.map(r => [r.id, r.reason_text]));
   const reasonCounts: Record<string, number> = {};
 
-  for (const o of cancelledOrders) {
+  for (const o of cancelledInWindow) {
     const rid = o.cancel_reason_id || 'unspecified';
     reasonCounts[rid] = (reasonCounts[rid] || 0) + 1;
   }
@@ -795,7 +798,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
       reason_id: reasonId,
       reason_text: reasonText,
       count,
-      percentage: cancelledOrders.length > 0 ? Math.round((count / cancelledOrders.length) * 100) : 0,
+      percentage: cancelledInWindow.length > 0 ? Math.round((count / cancelledInWindow.length) * 100) : 0,
     };
   }).sort((a, b) => b.count - a.count);
 
