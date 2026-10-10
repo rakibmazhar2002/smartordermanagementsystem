@@ -25,7 +25,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
   onSave,
 }) => {
   const [customerName, setCustomerName] = useState(order.customer_name);
-  const [phone, setPhone] = useState(order.phone);
+  const [phone] = useState(order.phone); // ফোন নম্বর স্টেট সুরক্ষিত রাখা হলো (এডিট বন্ধ)
   const [address, setAddress] = useState(order.address);
   const [shippingFee, setShippingFee] = useState<number>(order.shipping_fee);
   const [items, setItems] = useState<OrderItem[]>(
@@ -52,7 +52,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
       ...items,
       {
         product_id: Math.floor(Math.random() * 8000) + 1000,
-        name: 'Additional Product',
+        name: 'Additional Product Item',
         quantity: 1,
         price: 500,
         total: 500,
@@ -70,8 +70,8 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customerName.trim() || !phone.trim() || !address.trim()) {
-      setErrorMessage('Customer name, phone, and delivery address are required.');
+    if (!customerName.trim() || !address.trim()) {
+      setErrorMessage('Customer name and delivery address are required.');
       return;
     }
 
@@ -80,7 +80,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
     try {
       await onSave(order.id, {
         customer_name: customerName.trim(),
-        phone: phone.trim(),
+        phone: phone || order.phone, // আসল ফোন নম্বর ব্যাকএন্ডে অপরিবর্তিত থাকবে
         address: address.trim(),
         shipping_fee: Number(shippingFee),
         items_json: items,
@@ -127,35 +127,21 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             </div>
           )}
 
-          {/* Customer Credentials */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Customer Name
-              </label>
-              <input
-                type="text"
-                value={customerName}
-                onChange={e => setCustomerName(e.target.value)}
-                required
-                className="w-full px-3 py-2 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Customer Phone
-              </label>
-              <input
-                type="text"
-                value={phone}
-                onChange={e => setPhone(e.target.value)}
-                required
-                className="w-full px-3 py-2 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-              />
-            </div>
+          {/* Customer Name (মোবাইল নম্বর যাতে এডিট না হয় তাই হাইড রেখে নাম পুরো জায়গায় দেওয়া হলো) */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">
+              Customer Name
+            </label>
+            <input
+              type="text"
+              value={customerName}
+              onChange={e => setCustomerName(e.target.value)}
+              required
+              className="w-full px-3 py-2 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+            />
           </div>
 
+          {/* Delivery Address */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">
               Full Street Address
@@ -165,11 +151,11 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
               value={address}
               onChange={e => setAddress(e.target.value)}
               required
-              className="w-full px-3 py-2 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+              className="w-full px-3 py-2 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition resize-none"
             />
           </div>
 
-          {/* Line items editor */}
+          {/* Line items editor (প্রোডাক্টের ফুল নেম যাতে না কাটে) */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-semibold text-slate-300">
@@ -185,59 +171,65 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
               </button>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {items.map((item, idx) => (
                 <div
                   key={idx}
-                  className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-950 border border-slate-800/80"
+                  className="flex flex-col sm:flex-row sm:items-center gap-2.5 p-3 rounded-lg bg-slate-950 border border-slate-800/80"
                 >
+                  {/* Product Full Name Field */}
                   <div className="grow min-w-0">
                     <input
                       type="text"
+                      title={item.name}
                       value={item.name}
                       onChange={e => handleItemChange(idx, 'name', e.target.value)}
-                      placeholder="Product Name"
-                      className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      placeholder="Product Full Name"
+                      className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                     />
                   </div>
 
-                  <div className="w-16 shrink-0">
-                    <input
-                      type="number"
-                      min={1}
-                      value={item.quantity}
-                      onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
-                      placeholder="Qty"
-                      title="Quantity"
-                      className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-center text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
+                  {/* Quantity, Price, Line Total & Action */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="w-16">
+                      <input
+                        type="number"
+                        min={1}
+                        value={item.quantity}
+                        onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
+                        placeholder="Qty"
+                        title="Quantity"
+                        className="w-full px-2 py-2 text-xs bg-slate-900 border border-slate-800 rounded text-center text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
 
-                  <div className="w-24 shrink-0">
-                    <input
-                      type="number"
-                      min={0}
-                      value={item.price}
-                      onChange={e => handleItemChange(idx, 'price', e.target.value)}
-                      placeholder="Price"
-                      title="Price per unit"
-                      className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-right text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
+                    <div className="w-24">
+                      <input
+                        type="number"
+                        min={0}
+                        value={item.price}
+                        onChange={e => handleItemChange(idx, 'price', e.target.value)}
+                        placeholder="Price"
+                        title="Price per unit"
+                        className="w-full px-2 py-2 text-xs bg-slate-900 border border-slate-800 rounded text-right text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
 
-                  <div className="w-20 text-right text-xs font-mono font-medium text-slate-300 shrink-0">
-                    {item.total.toLocaleString()} ৳
-                  </div>
+                    <div className="w-20 text-right text-xs font-mono font-bold text-slate-200 tabular-nums">
+                      {item.total.toLocaleString()} ৳
+                    </div>
 
-                  {items.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveItem(idx)}
-                      className="p-1 text-slate-500 hover:text-red-400 rounded transition shrink-0"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                    {items.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveItem(idx)}
+                        className="p-1.5 text-slate-500 hover:text-red-400 rounded transition shrink-0"
+                        title="Remove Item"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -272,7 +264,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             </div>
           </div>
 
-          {/* Footer buttons */}
+          {/* Footer buttons (শুধুমাত্র Save বাটন রাখা হয়েছে) */}
           <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3 shrink-0">
             <button
               type="button"
@@ -285,14 +277,14 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="flex items-center gap-2 px-5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition shadow-md shadow-indigo-600/20 disabled:opacity-50"
+              className="flex items-center gap-2 px-6 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition shadow-md shadow-indigo-600/20 disabled:opacity-50"
             >
               {isSubmitting ? (
-                <span>Syncing Updates...</span>
+                <span>Saving...</span>
               ) : (
                 <>
                   <Save className="w-3.5 h-3.5" />
-                  <span>Save & Push to WooCommerce</span>
+                  <span>Save</span>
                 </>
               )}
             </button>
