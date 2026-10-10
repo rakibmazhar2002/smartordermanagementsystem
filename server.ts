@@ -56,11 +56,11 @@ function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
 
 // কঠোর স্ট্যাটাস ট্রানজিশন ম্যাপিং
 const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  pending: ['approved', 'hold', 'cancelled'], // পেন্ডিং থেকে এপ্রুভ, হোল্ড ও ক্যানসেল
-  approved: ['completed'],                    // এপ্রুভ থেকে শুধুমাত্র কমপ্লিট
-  hold: ['approved', 'cancelled'],            // হোল্ড থেকে শুধুমাত্র এপ্রুভ ও ক্যানসেল (কমপ্লিট সম্পূর্ণ ব্লক)
-  completed: [],                              // কমপ্লিট হলে কোনো স্ট্যাটাস পরিবর্তন করা যাবে না (লক)
-  cancelled: [],                              // ক্যানসেল হলে কোনো স্ট্যাটাস পরিবর্তন করা যাবে না (লক)
+  pending: ['approved', 'hold', 'cancelled'],
+  approved: ['completed'],
+  hold: ['approved', 'cancelled'],
+  completed: [],
+  cancelled: [],
 };
 
 // AUTHENTICATION ROUTES
@@ -545,7 +545,6 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
     return res.status(404).json({ error: `Order #${rawId} not found` });
   }
 
-  // কঠোর রুলস ভ্যালিডেশন (সার্ভার সাইড সিকিউরিটি গার্ড)
   const allowed = ALLOWED_TRANSITIONS[order.status] || [];
   if (!allowed.includes(status)) {
     return res.status(400).json({
@@ -737,7 +736,7 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
   return res.json({ success: true, count: updatedCount });
 });
 
-// ANALYTICS DASHBOARD
+// ANALYTICS DASHBOARD: Meta CAPI (Order Created Date) & বাকি সব (Action/Modified Date)
 app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: Response) => {
   const db = getDb();
   const range = (req.query.range as string) || 'today';
@@ -787,45 +786,50 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const startMs = startTime.getTime();
   const endMs = endTime.getTime();
 
-  // ১. মেটা সিএপিআই এবং পাইপলাইন ভলিউম: ফিল্টার হবে অর্ডার ক্রিয়েট ডেট (createdAt) দিয়ে
+  // ১। META CAPI DISPATCHED: শুধুমাত্র Order Created Date (createdAt) অনুযায়ী গণনা
   const createdOrders = db.orders.filter(o => {
     const t = new Date(o.createdAt).getTime();
     return !isNaN(t) && t >= startMs && t <= endMs;
   });
+  // ঐ তারিখে তৈরি হওয়া যেসব অর্ডার Approved হয়েছে (অথবা পরবর্তীতে ডেলিভারি হয়ে Completed হয়েছে)
+  const metaCapiDispatched = createdOrders.filter(
+    o => o.status === 'approved' || o.status === 'completed'
+  ).length;
 
-  const total = createdOrders.length || 1;
-  const pending = createdOrders.filter(o => o.status === 'pending').length;
-  const approved = createdOrders.filter(o => o.status === 'approved').length;
-  const hold = createdOrders.filter(o => o.status === 'hold').length;
-  const completed = createdOrders.filter(o => o.status === 'completed').length;
-
-  const grossRevenue = createdOrders
-    .filter(o => o.status === 'approved' || o.status === 'completed')
-    .reduce((sum, o) => sum + o.total_amount, 0);
-
-  // ২. ক্যানসেলেশন ও রুট-কজ: ফিল্টার হবে মডিফাইড/অ্যাকশন ডেট (updatedAt) দিয়ে
-  const cancelledInWindow = db.orders.filter(o => {
-    if (o.status !== 'cancelled') return false;
+  // ২। বাকি সব মেট্রিক্স: Action / Modified Date (updatedAt) অনুযায়ী গণনা
+  const modifiedOrders = db.orders.filter(o => {
     const actionTime = new Date(o.updatedAt || o.createdAt).getTime();
     return !isNaN(actionTime) && actionTime >= startMs && actionTime <= endMs;
   });
 
+  const total = modifiedOrders.length || 1;
+  const pending = modifiedOrders.filter(o => o.status === 'pending').length;
+  const approved = modifiedOrders.filter(o => o.status === 'approved').length;
+  const hold = modifiedOrders.filter(o => o.status === 'hold').length;
+  const completed = modifiedOrders.filter(o => o.status === 'completed').length;
+  const cancelled = modifiedOrders.filter(o => o.status === 'cancelled').length;
+
+  const grossRevenue = modifiedOrders
+    .filter(o => o.status === 'approved' || o.status === 'completed')
+    .reduce((sum, o) => sum + o.total_amount, 0);
+
   const pulse = {
-    total: createdOrders.length,
+    total: modifiedOrders.length,
     pending,
     approved,
     hold,
     completed,
-    cancelled: cancelledInWindow.length,
+    cancelled,
+    metaCapiDispatched, // অর্ডার ক্রিয়েশন তারিখের মেটা পারচেজ ডিসপ্যাচ সংখ্যা
     pendingPercent: Math.round((pending / total) * 100),
     approvedPercent: Math.round((approved / total) * 100),
     holdPercent: Math.round((hold / total) * 100),
     completedPercent: Math.round((completed / total) * 100),
-    cancelledPercent: Math.round((cancelledInWindow.length / total) * 100),
+    cancelledPercent: Math.round((cancelled / total) * 100),
     grossRevenue,
   };
 
-  // ৩. মডারেটর পারফরম্যান্স: ফিল্টার হবে লগ অ্যাকশন টাইম (timestamp) দিয়ে
+  // ৩। মডারেটর পারফরম্যান্স: লগ অ্যাকশন টাইম (timestamp) অনুযায়ী
   const moderators = db.users.filter(u => u.role === 'moderator' || u.role === 'super_admin');
   const moderatorPerformance = moderators.map(mod => {
     const modLogs = db.activityLogs.filter(l => {
@@ -848,10 +852,12 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     };
   });
 
+  // ৪। ক্যানসেলেশন রুট-কজ: মডিফাইড উইন্ডোর ক্যানসেলেশন অনুযায়ী
+  const cancelledOrders = modifiedOrders.filter(o => o.status === 'cancelled');
   const cancelReasonsMap = new Map(db.cancelReasons.map(r => [r.id, r.reason_text]));
   const reasonCounts: Record<string, number> = {};
 
-  for (const o of cancelledInWindow) {
+  for (const o of cancelledOrders) {
     const rid = o.cancel_reason_id || 'unspecified';
     reasonCounts[rid] = (reasonCounts[rid] || 0) + 1;
   }
@@ -862,7 +868,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
       reason_id: reasonId,
       reason_text: reasonText,
       count,
-      percentage: cancelledInWindow.length > 0 ? Math.round((count / cancelledInWindow.length) * 100) : 0,
+      percentage: cancelledOrders.length > 0 ? Math.round((count / cancelledOrders.length) * 100) : 0,
     };
   }).sort((a, b) => b.count - a.count);
 
