@@ -516,11 +516,14 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
   order.updated_by_id = user.id;
   order.updatedAt = new Date().toISOString();
 
+  // অ্যাক্টিভিটি লগ (Approved হলে মেটা পারচেজ ট্রিগার এবং Completed হলে লোকাল ডেলিভারি)
   let logDescription = `Status changed from ${prevStatus.toUpperCase()} to ${status.toUpperCase()} by ${user.name}.`;
   if (status === 'cancelled') {
     logDescription = `Order #${rawId} Cancelled. Reason: "${cancelReasonText}". Appended internal note to WooCommerce.`;
+  } else if (status === 'approved') {
+    logDescription = `Order #${rawId} APPROVED by ${user.name}. Synced to WooCommerce as COMPLETED (Dispatched Meta CAPI Purchase).`;
   } else if (status === 'completed') {
-    logDescription = `Status changed to COMPLETED by ${user.name}. Dispatched WooCommerce server-side Meta CAPI Purchase event.`;
+    logDescription = `Order #${rawId} marked COMPLETED (Delivered) in SOMS by ${user.name}. (WooCommerce status unchanged).`;
   }
 
   const actionType: ActionType = status === 'cancelled' ? 'cancelled' : 'status_change';
@@ -651,13 +654,18 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
       order.updated_by_id = user.id;
       order.updatedAt = new Date().toISOString();
 
+      let actionDesc = `Bulk status update: changed from ${prevStatus.toUpperCase()} to ${status.toUpperCase()} by ${user.name}.`;
+      if (status === 'approved') {
+        actionDesc = `Bulk status update: changed to APPROVED by ${user.name}. Synced to WooCommerce as COMPLETED (Meta CAPI Dispatched).`;
+      }
+
       db.activityLogs.unshift({
         id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         order_id: id,
         user_id: user.id,
         user_name: user.name,
         action_type: 'status_change',
-        description: `Bulk status update: changed from ${prevStatus.toUpperCase()} to ${status.toUpperCase()} by ${user.name}.`,
+        description: actionDesc,
         timestamp: new Date().toISOString(),
       });
 
@@ -730,8 +738,6 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const pending = createdOrders.filter(o => o.status === 'pending').length;
   const approved = createdOrders.filter(o => o.status === 'approved').length;
   const hold = createdOrders.filter(o => o.status === 'hold').length;
-  
-  // মেটা সিএপিআই পারচেজ: এই তারিখে তৈরি করা অর্ডার যা কমপ্লিট হয়েছে (অ্যাড ম্যানেজারের সাথে মিলবে)
   const completed = createdOrders.filter(o => o.status === 'completed').length;
 
   const grossRevenue = createdOrders
