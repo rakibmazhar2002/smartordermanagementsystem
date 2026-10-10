@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { CancelReason, Order } from '../../types/index.ts';
-import { X, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { X, AlertTriangle, CheckCircle2, Edit3 } from 'lucide-react';
 
 interface CancelOrderModalProps {
   order: Order;
   cancelReasons: CancelReason[];
   isOpen: boolean;
   onClose: () => void;
-  onConfirmCancel: (orderId: number, reasonId: string) => Promise<void>;
+  onConfirmCancel: (orderId: number, reasonId: string, customReason?: string) => Promise<void>;
 }
 
 export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
@@ -18,6 +18,7 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
   onConfirmCancel,
 }) => {
   const [selectedReasonId, setSelectedReasonId] = useState('');
+  const [customReason, setCustomReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -25,20 +26,34 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
 
   const activeReasons = cancelReasons.filter(r => r.is_active);
 
+  // ভ্যালিডেশন: রিজন সিলেক্ট থাকতে হবে এবং Others হলে বক্সে লেখা থাকতে হবে
+  const isFormValid =
+    Boolean(selectedReasonId) &&
+    (selectedReasonId !== 'other' || Boolean(customReason.trim()));
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedReasonId) {
-      setErrorMessage('A cancellation reason must be selected before submitting.');
+      setErrorMessage('একটি ক্যানসেলেশন কারণ নির্বাচন করা বাধ্যতামূলক।');
+      return;
+    }
+
+    if (selectedReasonId === 'other' && !customReason.trim()) {
+      setErrorMessage('দয়া করে কারণটি বক্সে বিস্তারিত লিখুন।');
       return;
     }
 
     setErrorMessage(null);
     setIsSubmitting(true);
     try {
-      await onConfirmCancel(order.id, selectedReasonId);
+      await onConfirmCancel(
+        order.id,
+        selectedReasonId,
+        selectedReasonId === 'other' ? customReason.trim() : undefined
+      );
       onClose();
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to cancel order.');
+      setErrorMessage(err.message || 'অর্ডার ক্যানসেল করতে ব্যর্থ হয়েছে।');
     } finally {
       setIsSubmitting(false);
     }
@@ -75,7 +90,7 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
           <div className="p-3.5 bg-red-950/30 border border-red-900/40 rounded-lg text-xs text-red-300 space-y-1">
             <p className="font-semibold text-red-200">Strict Cancellation Governance:</p>
             <p>
-              Cancelling Order #{order.id} will update its status to <span className="font-mono">cancelled</span>, dispatch an outbound WooCommerce REST API call, and append the selected reason as an internal order note in WooCommerce.
+              অর্ডার #{order.id} ক্যানসেল করলে তা <span className="font-mono">cancelled</span> হবে, WooCommerce-এ সিংক হবে এবং নির্বাচিত কারণটি WooCommerce-এ ইন্টার্নাল নোট হিসেবে যুক্ত হবে।
             </p>
           </div>
 
@@ -106,11 +121,34 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
                   {r.reason_text}
                 </option>
               ))}
+              <option value="other">✍️ Others / অন্যান্য (নিজে কারণ লিখুন)</option>
             </select>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Submission remains strictly disabled until a valid category is chosen.
-            </p>
           </div>
+
+          {/* Others সিলেক্ট করলে কাস্টম কারণ লেখার বক্স */}
+          {selectedReasonId === 'other' && (
+            <div className="space-y-1.5 animate-in fade-in duration-200">
+              <label className="block text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>কারণটি বিস্তারিত লিখুন (Custom Reason) <span className="text-red-400">*</span></span>
+              </label>
+              <textarea
+                rows={2}
+                value={customReason}
+                onChange={e => {
+                  setCustomReason(e.target.value);
+                  setErrorMessage(null);
+                }}
+                placeholder="যেমন: কাস্টমার পরে নিবে বলেছে, ডেলিভারি লোকেশন সার্ভিস নেই, ফেক অর্ডার..."
+                required
+                className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none placeholder-slate-500"
+              />
+            </div>
+          )}
+
+          <p className="text-[11px] text-slate-500">
+            কারণ নির্বাচন এবং নিশ্চিত না করা পর্যন্ত সাবমিশন বাটন ডিজেবল থাকবে।
+          </p>
 
           {/* Action buttons */}
           <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3">
@@ -124,7 +162,7 @@ export const CancelOrderModal: React.FC<CancelOrderModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={!selectedReasonId || isSubmitting}
+              disabled={!isFormValid || isSubmitting}
               className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-500 rounded-lg transition shadow-md shadow-red-600/20 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {isSubmitting ? (
