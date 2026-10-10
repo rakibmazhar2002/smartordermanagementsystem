@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
-import { Layers, ShieldCheck, ArrowRight, UserCheck } from 'lucide-react';
+import { Layers, ArrowRight } from 'lucide-react';
 
 export const LoginView: React.FC = () => {
   const { login } = useAuth();
@@ -25,12 +25,6 @@ export const LoginView: React.FC = () => {
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleQuickLogin = (demoEmail: string, demoPass: string) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-    setError(null);
   };
 
   return (
@@ -64,7 +58,7 @@ export const LoginView: React.FC = () => {
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="mirakib2246@gmail.com"
+                placeholder="name@example.com"
                 required
                 className="w-full px-3 py-2 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
               />
@@ -99,41 +93,6 @@ export const LoginView: React.FC = () => {
               )}
             </button>
           </form>
-
-          {/* Quick-fill credentials for demo testing */}
-          <div className="mt-6 pt-5 border-t border-slate-800">
-            <div className="text-[11px] font-medium text-slate-400 mb-3 text-center uppercase tracking-wider">
-              Quick One-Click Test Accounts
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('mirakib2246@gmail.com', 'Rakib@@3236')}
-                className="flex flex-col items-start p-2.5 rounded-lg border border-indigo-900/60 bg-indigo-950/30 hover:bg-indigo-950/60 transition text-left group"
-              >
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-indigo-300">
-                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Super Admin</span>
-                </div>
-                <div className="text-[11px] text-slate-400 mt-1 truncate w-full">mirakib2246@gmail.com</div>
-                <div className="text-[10px] text-slate-500 font-mono">Rakib@@3236</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('tariq.moderator@soms.internal', 'Moderator@@2026')}
-                className="flex flex-col items-start p-2.5 rounded-lg border border-slate-800 bg-slate-950/50 hover:bg-slate-800/50 transition text-left group"
-              >
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
-                  <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Moderator</span>
-                </div>
-                <div className="text-[11px] text-slate-400 mt-1 truncate w-full">tariq.moderator@soms...</div>
-                <div className="text-[10px] text-slate-500 font-mono">Moderator@@2026</div>
-              </button>
-            </div>
-          </div>
         </div>
 
         <div className="mt-6 text-center text-xs text-slate-500">
