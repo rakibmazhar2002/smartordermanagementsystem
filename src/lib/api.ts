@@ -1,7 +1,21 @@
 import { Order, OrderStatus, CancelReason } from '../types/index.ts';
 
+export const TOKEN_KEY = 'soms_token';
+
+export const getStoredToken = (): string | null => {
+  return localStorage.getItem(TOKEN_KEY);
+};
+
+export const setStoredToken = (token: string): void => {
+  localStorage.setItem(TOKEN_KEY, token);
+};
+
+export const removeStoredToken = (): void => {
+  localStorage.removeItem(TOKEN_KEY);
+};
+
 const getAuthHeader = () => {
-  const token = localStorage.getItem('soms_token');
+  const token = getStoredToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
