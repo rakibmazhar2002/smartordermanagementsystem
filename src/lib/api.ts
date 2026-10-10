@@ -139,7 +139,22 @@ export const api = {
     return res.json();
   },
 
-  // Supports ID (number/string) OR Range Object { orderId, hours, startDate, endDate }
+  addOrderNote: async (id: number, note: string) => {
+    const res = await fetch(`/api/orders/${id}/notes`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify({ note }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to add note' }));
+      throw new Error(err.error || 'Failed to add note');
+    }
+    return res.json();
+  },
+
   pullOrders: async (params?: number | string | { orderId?: number | string; hours?: number; startDate?: string; endDate?: string }) => {
     let payload: any = {};
     if (typeof params === 'number' || typeof params === 'string') {
@@ -219,6 +234,23 @@ export const api = {
     return res.json();
   },
 
+  // createUser ও addUser দুটোই রাখা হলো যাতে আর কোনো ফাংশন মিসিং এরর না আসে
+  createUser: async (data: any) => {
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to create user' }));
+      throw new Error(err.error || 'Failed to create user');
+    }
+    return res.json();
+  },
+
   addUser: async (data: any) => {
     const res = await fetch('/api/users', {
       method: 'POST',
@@ -244,7 +276,10 @@ export const api = {
       },
       body: JSON.stringify(data),
     });
-    if (!res.ok) throw new Error('Failed to update user');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to update user' }));
+      throw new Error(err.error || 'Failed to update user');
+    }
     return res.json();
   },
 
@@ -282,7 +317,6 @@ export const api = {
     return res.json();
   },
 
-  // Handshake Connection Test
   testWooCommerceConnection: async (settings?: any) => {
     const res = await fetch('/api/woocommerce/test-connection', {
       method: 'POST',
