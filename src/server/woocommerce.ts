@@ -21,64 +21,66 @@ export interface WCOrderPayload {
     quantity: number;
     price: number | string;
     total: number | string;
+    meta_data?: Array<{ key: string; value: any; display_key?: string; display_value?: string }>;
   }>;
   shipping_total?: string | number;
   total?: string | number;
+  meta_data?: Array<{ key: string; value: any; display_key?: string; display_value?: string }>;
 }
 
-/**
- * Validates WooCommerce Webhook HMAC-SHA256 signature
- */
 export function verifyWooCommerceWebhookSignature(
   rawBody: string | Buffer,
   signatureHeader?: string,
   secret?: string
 ): boolean {
-  if (!signatureHeader || !secret) {
-    return true;
-  }
-
+  if (!signatureHeader || !secret) return true;
   try {
     const computed = crypto
       .createHmac('sha256', secret)
       .update(typeof rawBody === 'string' ? rawBody : rawBody.toString('utf-8'))
       .digest('base64');
-
     return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(signatureHeader));
-  } catch (err) {
-    console.error('[WC Webhook] Signature verification error:', err);
+  } catch {
     return false;
   }
 }
 
-/**
- * Map SOMS status to WooCommerce REST API status (Strict Logic)
- * Pending   -> processing
- * Approved  -> processing
- * Hold      -> on-hold
- * Cancelled -> cancelled
- * Completed -> completed
- */
 export function mapSomsStatusToWcStatus(somsStatus: OrderStatus): string {
   switch (somsStatus) {
-    case 'pending':
-      return 'processing';
-    case 'approved':
-      return 'processing';
-    case 'hold':
-      return 'on-hold';
-    case 'cancelled':
-      return 'cancelled';
-    case 'completed':
-      return 'completed';
-    default:
-      return 'processing';
+    case 'pending': return 'processing';
+    case 'approved': return 'processing';
+    case 'hold': return 'on-hold';
+    case 'cancelled': return 'cancelled';
+    case 'completed': return 'completed';
+    default: return 'processing';
   }
 }
 
 /**
- * Dispatches Outbound Sync to WooCommerce REST API
+ * Extract Size from WooCommerce custom checkout meta or line item meta
  */
+function extractSize(item: any, orderPayload: any): string | undefined {
+  // 1. Check line item meta
+  if (Array.isArray(item.meta_data)) {
+    const found = item.meta_data.find((m: any) => {
+      const k = String(m.key || m.display_key || '').toLowerCase();
+      return k.includes('size') || k.includes('সাইজ') || k === 'pa_size';
+    });
+    if (found && found.value) return String(found.display_value || found.value);
+  }
+
+  // 2. Check Order-level custom checkout meta (CartFlows / Custom fields)
+  if (Array.isArray(orderPayload?.meta_data)) {
+    const found = orderPayload.meta_data.find((m: any) => {
+      const k = String(m.key || m.display_key || '').toLowerCase();
+      return k.includes('size') || k.includes('সাইজ');
+    });
+    if (found && found.value) return String(found.display_value || found.value);
+  }
+
+  return undefined;
+}
+
 export async function syncOrderToWooCommerce(
   wcOrderId: number,
   updates: {
@@ -93,170 +95,119 @@ export async function syncOrderToWooCommerce(
 ): Promise<{ success: boolean; message: string; metaCapiTriggered?: boolean; internalNoteAdded?: boolean }> {
   const db = getDb();
   const settings = db.settings;
-
   const order = db.orders.find(o => o.id === wcOrderId);
-  if (!order) {
-    return { success: false, message: `Order #${wcOrderId} not found in SOMS.` };
-  }
+  if (!order) return { success: false, message: `Order #${wcOrderId} not found.` };
 
-  // Construct WooCommerce payload
   const wcPayload: Record<string, unknown> = {};
 
   if (updates.status) {
-    const wcStatus = mapSomsStatusToWcStatus(updates.status);
-    wcPayload.status = wcStatus;
+    wcPayload.status = mapSomsStatusToWcStatus(updates.status);
   }
 
   if (updates.customer_name || updates.phone || updates.address) {
     const nameParts = (updates.customer_name || order.customer_name).trim().split(' ');
-    const firstName = nameParts[0] || '';
-    const lastName = nameParts.slice(1).join(' ') || '';
-
     wcPayload.billing = {
-      first_name: firstName,
-      last_name: lastName,
+      first_name: nameParts[0] || '',
+      last_name: nameParts.slice(1).join(' ') || '',
       phone: updates.phone || order.phone,
       address_1: updates.address || order.address,
     };
   }
 
   if (updates.shipping_fee !== undefined) {
-    wcPayload.shipping_lines = [
-      {
-        method_id: 'flat_rate',
-        method_title: 'Standard Courier Shipping',
-        total: String(updates.shipping_fee),
-      },
-    ];
+    wcPayload.shipping_lines = [{ method_id: 'flat_rate', method_title: 'Courier', total: String(updates.shipping_fee) }];
   }
 
-  let metaCapiTriggered = false;
   let internalNoteAdded = false;
+  if (updates.status === 'cancelled' && updates.cancelReasonText) internalNoteAdded = true;
 
-  if (updates.status === 'completed') {
-    metaCapiTriggered = true;
-  }
-
-  if (updates.status === 'cancelled' && updates.cancelReasonText) {
-    internalNoteAdded = true;
-  }
-
-  // Check if live WooCommerce credentials are provided
-  if (
-    settings.wc_store_url &&
-    settings.wc_store_url.startsWith('http') &&
-    settings.wc_consumer_key &&
-    settings.wc_consumer_secret
-  ) {
+  if (settings.wc_store_url && settings.wc_consumer_key && settings.wc_consumer_secret) {
     try {
       const baseUrl = settings.wc_store_url.replace(/\/\$/, '');
-      
-      // Dual Authentication: Basic Auth Header + Query Parameters (LiteSpeed header stripping fix)
       const authHeader = 'Basic ' + Buffer.from(`${settings.wc_consumer_key}:${settings.wc_consumer_secret}`).toString('base64');
       const targetUrl = new URL(`${baseUrl}/wp-json/wc/v3/orders/${wcOrderId}`);
       targetUrl.searchParams.set('consumer_key', settings.wc_consumer_key);
       targetUrl.searchParams.set('consumer_secret', settings.wc_consumer_secret);
 
-      console.log(`[WC Sync] Sending PUT to WooCommerce: Order #${wcOrderId} -> Payload:`, JSON.stringify(wcPayload));
-
       const res = await fetch(targetUrl.toString(), {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: authHeader,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
         body: JSON.stringify(wcPayload),
-        signal: AbortSignal.timeout(10000), // 10s resilient timeout
+        signal: AbortSignal.timeout(10000),
       });
 
-      const resBody = await res.text();
+      if (res.ok && internalNoteAdded) {
+        const noteUrl = new URL(`${baseUrl}/wp-json/wc/v3/orders/${wcOrderId}/notes`);
+        noteUrl.searchParams.set('consumer_key', settings.wc_consumer_key);
+        noteUrl.searchParams.set('consumer_secret', settings.wc_consumer_secret);
 
-      if (!res.ok) {
-        console.error(`[WC Sync Failed] HTTP ${res.status}:`, resBody);
-      } else {
-        console.log(`[WC Sync Success] Order #${wcOrderId} successfully updated in WooCommerce!`);
-
-        // If cancelled with a reason, add an internal note to the order
-        if (internalNoteAdded) {
-          const noteUrl = new URL(`${baseUrl}/wp-json/wc/v3/orders/${wcOrderId}/notes`);
-          noteUrl.searchParams.set('consumer_key', settings.wc_consumer_key);
-          noteUrl.searchParams.set('consumer_secret', settings.wc_consumer_secret);
-
-          await fetch(noteUrl.toString(), {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: authHeader,
-            },
-            body: JSON.stringify({
-              note: `[SOMS Cancelled] Reason: ${updates.cancelReasonText}`,
-              customer_note: false,
-            }),
-          }).catch(err => console.error('[WC Note Error]:', err));
-        }
+        await fetch(noteUrl.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+          body: JSON.stringify({ note: `[SOMS Cancelled] Reason: ${updates.cancelReasonText}`, customer_note: false }),
+        }).catch(() => null);
       }
     } catch (err: any) {
-      console.error(`[WC Sync Exception] Failed to dispatch update for Order #${wcOrderId}:`, err.message || err);
+      console.error(`[WC Sync Error]:`, err.message);
     }
-  } else {
-    console.warn('[WC Sync Warning] WooCommerce credentials missing or invalid in SOMS Settings!');
   }
 
-  // Update order sync timestamp
   order.wc_sync_status = 'synced';
   order.wc_last_synced_at = new Date().toISOString();
   saveDb();
 
-  return {
-    success: true,
-    message: `Synchronized #${wcOrderId} to WooCommerce (${updates.status ? `mapped to '\${mapSomsStatusToWcStatus(updates.status)}'` : 'details updated'})`,
-    metaCapiTriggered,
-    internalNoteAdded,
-  };
+  return { success: true, message: `Synced #${wcOrderId}`, metaCapiTriggered: updates.status === 'completed', internalNoteAdded };
 }
 
-/**
- * Process Inbound WooCommerce Webhook Order Created
- */
-export function ingestWooCommerceOrder(payload: WCOrderPayload): Order {
+export function ingestWooCommerceOrder(payload: any): Order {
   const db = getDb();
   const wcOrderId = payload.id;
 
   const existing = db.orders.find(o => o.id === wcOrderId);
-  if (existing) {
-    return existing;
-  }
 
   const customerName = `${payload.billing?.first_name || ''} ${payload.billing?.last_name || ''}`.trim() || 'Guest Customer';
   const phone = payload.billing?.phone || '';
-  const address = [payload.billing?.address_1, payload.billing?.address_2, payload.billing?.city]
-    .filter(Boolean)
-    .join(', ') || 'Address not specified';
+  const address = [payload.billing?.address_1, payload.billing?.address_2, payload.billing?.city].filter(Boolean).join(', ') || 'Address not specified';
 
-  const items: OrderItem[] = (payload.line_items || []).map(item => ({
-    product_id: item.id || 1000,
-    name: item.name || 'Store Item',
-    variation: item.variation_id ? `Var #${item.variation_id}` : undefined,
-    quantity: item.quantity || 1,
-    price: Number(item.price) || 0,
-    total: Number(item.total) || (Number(item.price) * (item.quantity || 1)),
-  }));
+  const items: OrderItem[] = (payload.line_items || []).map((item: any) => {
+    const size = extractSize(item, payload);
+    return {
+      product_id: item.id || 1000,
+      name: size ? `${item.name} (${size})` : (item.name || 'Store Item'),
+      variation: size ? `Size: ${size}` : (item.variation_id ? `Var #${item.variation_id}` : undefined),
+      quantity: item.quantity || 1,
+      price: Number(item.price) || 0,
+      total: Number(item.total) || (Number(item.price) * (item.quantity || 1)),
+    };
+  });
 
-  const shippingFee = Number(payload.shipping_total) || 100;
+  const shippingFee = Number(payload.shipping_total) || 80;
   const totalAmount = Number(payload.total) || items.reduce((acc, i) => acc + i.total, 0) + shippingFee;
+
+  if (existing) {
+    existing.items_json = items;
+    existing.customer_name = customerName;
+    existing.phone = phone;
+    existing.address = address;
+    existing.total_amount = totalAmount;
+    existing.shipping_fee = shippingFee;
+    existing.updatedAt = new Date().toISOString();
+    saveDb();
+    return existing;
+  }
 
   const newOrder: Order = {
     id: wcOrderId,
     customer_name: customerName,
     phone,
     address,
-    items_json: items.length > 0 ? items : [{ product_id: 9999, name: 'Standard Product', quantity: 1, price: totalAmount - shippingFee, total: totalAmount - shippingFee }],
+    items_json: items,
     shipping_fee: shippingFee,
     total_amount: totalAmount,
     status: 'pending',
     cancel_reason_id: null,
     updated_by_id: null,
-    createdAt: new Date().toISOString(),
+    createdAt: new Date(payload.date_created || Date.now()).toISOString(),
     updatedAt: new Date().toISOString(),
     wc_sync_status: 'synced',
     wc_last_synced_at: new Date().toISOString(),
@@ -264,17 +215,70 @@ export function ingestWooCommerceOrder(payload: WCOrderPayload): Order {
 
   db.orders.unshift(newOrder);
 
-  // Activity Log
   db.activityLogs.unshift({
     id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     order_id: wcOrderId,
     user_id: null,
     user_name: 'WooCommerce Webhook',
     action_type: 'order_created',
-    description: `Order #${wcOrderId} ingested via WooCommerce order.created webhook. Initial status set to Pending.`,
+    description: `Order #${wcOrderId} ingested with size details.`,
     timestamp: new Date().toISOString(),
   });
 
   saveDb();
   return newOrder;
+}
+
+export async function pullOrdersFromWooCommerce(orderId?: number): Promise<{ success: boolean; count: number; message: string }> {
+  const db = getDb();
+  const settings = db.settings;
+
+  if (!settings.wc_store_url || !settings.wc_consumer_key || !settings.wc_consumer_secret) {
+    throw new Error('WooCommerce API credentials not configured in settings.');
+  }
+
+  const baseUrl = settings.wc_store_url.replace(/\/\$/, '');
+  const authHeader = 'Basic ' + Buffer.from(`${settings.wc_consumer_key}:${settings.wc_consumer_secret}`).toString('base64');
+
+  let targetUrl: URL;
+  if (orderId) {
+    targetUrl = new URL(`${baseUrl}/wp-json/wc/v3/orders/${orderId}`);
+  } else {
+    targetUrl = new URL(`${baseUrl}/wp-json/wc/v3/orders`);
+    targetUrl.searchParams.set('per_page', '20');
+    targetUrl.searchParams.set('orderby', 'date');
+    targetUrl.searchParams.set('order', 'desc');
+  }
+
+  targetUrl.searchParams.set('consumer_key', settings.wc_consumer_key);
+  targetUrl.searchParams.set('consumer_secret', settings.wc_consumer_secret);
+
+  const res = await fetch(targetUrl.toString(), {
+    headers: { Authorization: authHeader, Accept: 'application/json' },
+    signal: AbortSignal.timeout(12000),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`WooCommerce REST API returned HTTP ${res.status}: ${errorText}`);
+  }
+
+  const data = await res.json();
+  const list = Array.isArray(data) ? data : [data];
+  let imported = 0;
+
+  for (const item of list) {
+    if (item && item.id) {
+      ingestWooCommerceOrder(item);
+      imported++;
+    }
+  }
+
+  return {
+    success: true,
+    count: imported,
+    message: orderId
+      ? `Order #${orderId} pulled successfully from WooCommerce!`
+      : `Successfully pulled ${imported} orders from WooCommerce!`,
+  };
 }
