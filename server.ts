@@ -8,6 +8,7 @@ import {
   syncOrderToWooCommerce,
   ingestWooCommerceOrder,
   verifyWooCommerceWebhookSignature,
+  pullOrdersFromWooCommerce,
 } from './src/server/woocommerce.ts';
 import { AuthUser, verifySessionToken } from './src/middleware.ts';
 import { OrderStatus, ActionType } from './src/types/index.ts';
@@ -20,7 +21,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Body parser with rawBody preservation for WooCommerce Webhook HMAC verification
+// Body parser with rawBody preservation for Webhook HMAC
 app.use(
   express.json({
     limit: '10mb',
@@ -41,7 +42,6 @@ function authenticate(req: Request, res: Response, next: NextFunction) {
   if (!valid || !user) {
     return res.status(401).json({ error: 'Unauthorized: Valid session required' });
   }
-  // Attach user to req
   (req as any).user = user;
   next();
 }
@@ -54,9 +54,7 @@ function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-// ----------------------------------------------------
 // AUTHENTICATION ROUTES
-// ----------------------------------------------------
 app.post('/api/auth/login', async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
@@ -88,13 +86,9 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       status: user.status,
     };
 
-    // Lightweight stateless session token (base64 payload)
     const token = Buffer.from(JSON.stringify(authUser)).toString('base64');
 
-    return res.json({
-      token,
-      user: authUser,
-    });
+    return res.json({ token, user: authUser });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Login failed' });
   }
@@ -105,9 +99,7 @@ app.get('/api/auth/me', authenticate, (req: Request, res: Response) => {
   return res.json({ user });
 });
 
-// ----------------------------------------------------
-// SETTINGS & WOOCOMMERCE CONNECTION (Super Admin only)
-// ----------------------------------------------------
+// SETTINGS & WOOCOMMERCE CONNECTION
 app.get('/api/settings', authenticate, requireSuperAdmin, (_req: Request, res: Response) => {
   const db = getDb();
   res.json(db.settings);
@@ -169,14 +161,13 @@ app.post('/api/woocommerce/test-connection', authenticate, requireSuperAdmin, as
       });
     } else {
       return res.json({
-        success: true, // Graceful decoupled mode
+        success: true,
         statusCode: response.status,
         message: `Credentials configured properly. Server returned HTTP ${response.status}. SOMS decoupled async queue is operational.`,
         mode: 'decoupled_operational',
       });
     }
   } catch {
-    // Decoupled architecture reassurance
     return res.json({
       success: true,
       statusCode: 200,
@@ -186,13 +177,22 @@ app.post('/api/woocommerce/test-connection', authenticate, requireSuperAdmin, as
   }
 });
 
-// ----------------------------------------------------
+// PULL ORDERS DIRECTLY FROM WOOCOMMERCE
+app.post('/api/woocommerce/pull-orders', authenticate, async (req: Request, res: Response) => {
+  try {
+    const rawId = req.body.order_id ? parseInt(String(req.body.order_id).replace(/\D/g, ''), 10) : undefined;
+    const result = await pullOrdersFromWooCommerce(rawId);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to pull order from WooCommerce' });
+  }
+});
+
 // INBOUND WOOCOMMERCE WEBHOOK
-// ----------------------------------------------------
 app.post('/api/webhooks/woocommerce/order-created', (req: Request, res: Response) => {
   const topic = req.headers['x-wc-webhook-topic'] as string | undefined;
 
-  // 1. WooCommerce Ping / Handshake Handler (WordPress Webhook সেভ করার সময় স্বয়ংক্রিয়ভাবে 200 OK পাঠাবে)
+  // WooCommerce Webhook Ping Acknowledgement
   if (topic === 'action.woocommerce_webhook_ping' || (!req.body?.id && req.body?.webhook_id)) {
     return res.status(200).json({
       success: true,
@@ -200,7 +200,7 @@ app.post('/api/webhooks/woocommerce/order-created', (req: Request, res: Response
     });
   }
 
-  // 2. HMAC Signature Verification
+  // Signature check
   const signature = req.headers['x-wc-webhook-signature'] as string | undefined;
   const db = getDb();
   const secret = db.settings.wc_webhook_secret;
@@ -210,7 +210,6 @@ app.post('/api/webhooks/woocommerce/order-created', (req: Request, res: Response
     const isValid = verifyWooCommerceWebhookSignature(rawBody, signature, secret);
 
     if (!isValid) {
-      // Fallback with JSON stringified format
       const isFallbackValid = verifyWooCommerceWebhookSignature(JSON.stringify(req.body), signature, secret);
       if (!isFallbackValid) {
         return res.status(401).json({ error: 'Invalid HMAC signature' });
@@ -218,13 +217,11 @@ app.post('/api/webhooks/woocommerce/order-created', (req: Request, res: Response
     }
   }
 
-  // 3. Payload Validation
   const payload = req.body;
   if (!payload || !payload.id) {
     return res.status(400).json({ error: 'Invalid WooCommerce order payload. id is required.' });
   }
 
-  // 4. Ingest Order into Local SOMS Store
   const newOrder = ingestWooCommerceOrder(payload);
 
   return res.status(200).json({
@@ -234,61 +231,7 @@ app.post('/api/webhooks/woocommerce/order-created', (req: Request, res: Response
   });
 });
 
-// Quick Webhook Simulator (Super Admin or Moderator can test incoming order)
-app.post('/api/webhooks/woocommerce/simulate-test', authenticate, (req: Request, res: Response) => {
-  const db = getDb();
-  const highestId = db.orders.reduce((max, o) => Math.max(max, o.id), 7109);
-  const nextWcId = highestId + 1;
-
-  const sampleProducts = [
-    { id: 1050, name: 'Executive Linen Blazer', price: 5800, variation_id: 112 },
-    { id: 1051, name: 'Bespoke Italian Silk Tie', price: 1200 },
-    { id: 1052, name: 'Merino Wool Pullover Sweater', price: 2950, variation_id: 204 },
-    { id: 1053, name: 'Leather Monk Strap Shoes', price: 4600, variation_id: 312 },
-  ];
-
-  const randomProd = sampleProducts[Math.floor(Math.random() * sampleProducts.length)];
-  const customerNames = ['Zubair Al Mamun', 'Nusrat Jahan', 'Mahmudul Hasan', 'Arifur Rahman', 'Shamima Akter'];
-  const phones = ['01711002233', '01822334455', '01933445566', '01644556677', '01555667788'];
-  const cities = ['Dhanmondi, Dhaka', 'Gulshan 2, Dhaka', 'Agrabad, Chattogram', 'Zindabazar, Sylhet', 'Sonadanga, Khulna'];
-
-  const randIdx = Math.floor(Math.random() * customerNames.length);
-
-  const mockPayload = {
-    id: nextWcId, // STRICT WOOCOMMERCE ID
-    status: 'processing',
-    billing: {
-      first_name: customerNames[randIdx].split(' ')[0],
-      last_name: customerNames[randIdx].split(' ')[1] || '',
-      phone: phones[randIdx],
-      address_1: `House ${Math.floor(Math.random() * 80) + 1}, Road ${Math.floor(Math.random() * 20) + 1}`,
-      city: cities[randIdx],
-    },
-    line_items: [
-      {
-        id: randomProd.id,
-        name: randomProd.name,
-        variation_id: randomProd.variation_id,
-        quantity: Math.floor(Math.random() * 2) + 1,
-        price: randomProd.price,
-        total: randomProd.price,
-      },
-    ],
-    shipping_total: 100,
-    total: randomProd.price + 100,
-  };
-
-  const newOrder = ingestWooCommerceOrder(mockPayload);
-  return res.json({
-    success: true,
-    message: `Simulated WooCommerce Order #${newOrder.id} created!`,
-    order: newOrder,
-  });
-});
-
-// ----------------------------------------------------
-// DYNAMIC CANCEL REASONS (Super Admin only for mutation)
-// ----------------------------------------------------
+// DYNAMIC CANCEL REASONS
 app.get('/api/cancel-reasons', authenticate, (_req: Request, res: Response) => {
   const db = getDb();
   res.json(db.cancelReasons);
@@ -344,9 +287,7 @@ app.delete('/api/cancel-reasons/:id', authenticate, requireSuperAdmin, (req: Req
   res.json({ success: true, message: 'Reason deleted' });
 });
 
-// ----------------------------------------------------
-// MODERATOR ACCOUNTS MANAGER (Super Admin only)
-// ----------------------------------------------------
+// MODERATOR ACCOUNTS MANAGER
 app.get('/api/users', authenticate, requireSuperAdmin, (_req: Request, res: Response) => {
   const db = getDb();
   const safeUsers = db.users.map(({ password_hash, ...rest }) => rest);
@@ -416,10 +357,7 @@ app.put('/api/users/:id', authenticate, requireSuperAdmin, async (req: Request, 
   }
 });
 
-// ----------------------------------------------------
-// ORDERS CRUD & HIGH-CONCURRENCY ENDPOINTS
-// STRICT RULE: All references use native WooCommerce Order ID (integer)
-// ----------------------------------------------------
+// ORDERS CRUD
 app.get('/api/orders', authenticate, (req: Request, res: Response) => {
   const db = getDb();
   const status = req.query.status as string | undefined;
@@ -443,17 +381,14 @@ app.get('/api/orders', authenticate, (req: Request, res: Response) => {
     });
   }
 
-  // Sort newest first
   filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  // Attach cancel reasons and activity logs count
   const cancelReasonsMap = new Map(db.cancelReasons.map(r => [r.id, r]));
   const ordersWithMeta = filtered.map(order => ({
     ...order,
     cancel_reason: order.cancel_reason_id ? cancelReasonsMap.get(order.cancel_reason_id) : null,
   }));
 
-  // Also include status counts for tab badges
   const counts = {
     all: db.orders.length,
     pending: db.orders.filter(o => o.status === 'pending').length,
@@ -496,7 +431,6 @@ app.get('/api/orders/:id', authenticate, (req: Request, res: Response) => {
   });
 });
 
-// Update Order Status (Pending, Approved, Hold, Completed, Cancelled)
 app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Response) => {
   const rawId = parseInt(req.params.id, 10);
   if (isNaN(rawId)) {
@@ -570,7 +504,6 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
   });
 });
 
-// Update Order Details
 app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => {
   const rawId = parseInt(req.params.id, 10);
   if (isNaN(rawId)) {
@@ -649,7 +582,6 @@ app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => 
   });
 });
 
-// Bulk status update
 app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Response) => {
   const { order_ids, status } = req.body as { order_ids: number[]; status: OrderStatus };
   const user = (req as any).user as AuthUser;
@@ -692,9 +624,7 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
   return res.json({ success: true, count: updatedCount });
 });
 
-// ----------------------------------------------------
-// EXECUTIVE ANALYTICS DASHBOARD (Super Admin Only)
-// ----------------------------------------------------
+// ANALYTICS DASHBOARD
 app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: Response) => {
   const db = getDb();
   const range = (req.query.range as string) || 'today';
@@ -801,9 +731,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   });
 });
 
-// ----------------------------------------------------
 // VITE DEV SERVER / STATIC PRODUCTION SERVING
-// ----------------------------------------------------
 if (process.env.NODE_ENV !== 'production') {
   const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({
