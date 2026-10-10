@@ -139,14 +139,27 @@ export const api = {
     return res.json();
   },
 
-  pullOrders: async (orderId?: number | string) => {
+  // Supports ID (number/string) OR Range Object { orderId, hours, startDate, endDate }
+  pullOrders: async (params?: number | string | { orderId?: number | string; hours?: number; startDate?: string; endDate?: string }) => {
+    let payload: any = {};
+    if (typeof params === 'number' || typeof params === 'string') {
+      payload = { order_id: params };
+    } else if (typeof params === 'object' && params !== null) {
+      payload = {
+        order_id: params.orderId,
+        hours: params.hours,
+        start_date: params.startDate,
+        end_date: params.endDate,
+      };
+    }
+
     const res = await fetch('/api/woocommerce/pull-orders', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),
       },
-      body: JSON.stringify({ order_id: orderId }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Pull failed' }));
@@ -269,7 +282,7 @@ export const api = {
     return res.json();
   },
 
-  // Handshake Connection Test (UI compatibility)
+  // Handshake Connection Test
   testWooCommerceConnection: async (settings?: any) => {
     const res = await fetch('/api/woocommerce/test-connection', {
       method: 'POST',
