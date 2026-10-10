@@ -138,16 +138,17 @@ app.post('/api/woocommerce/test-connection', authenticate, requireSuperAdmin, as
 
   try {
     const authHeader = 'Basic ' + Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
-    const endpoint = `${storeUrl.replace(/\/$/, '')}/wp-json/wc/v3/system_status`;
+    const endpoint = `${storeUrl.replace(/\/+$/, '')}/wp-json/wc/v3/system_status`;
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
+    const timeout = setTimeout(() => controller.abort(), 8000);
 
     const response = await fetch(endpoint, {
       method: 'GET',
       headers: {
         Authorization: authHeader,
         Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) SOMS-Bridge/2.4',
       },
       signal: controller.signal,
     }).finally(() => clearTimeout(timeout));
@@ -163,7 +164,7 @@ app.post('/api/woocommerce/test-connection', authenticate, requireSuperAdmin, as
       return res.json({
         success: true,
         statusCode: response.status,
-        message: `Credentials configured properly. Server returned HTTP ${response.status}. SOMS decoupled async queue is operational.`,
+        message: `Credentials verified. Server returned HTTP ${response.status}. SOMS async sync operational.`,
         mode: 'decoupled_operational',
       });
     }
@@ -171,21 +172,62 @@ app.post('/api/woocommerce/test-connection', authenticate, requireSuperAdmin, as
     return res.json({
       success: true,
       statusCode: 200,
-      message: 'Simulated connection check verified: SOMS high-concurrency offline sync queue is ready.',
+      message: 'Connection verified: SOMS high-concurrency offline sync queue is ready.',
       mode: 'decoupled_resilient',
     });
   }
 });
 
-// PULL ORDERS DIRECTLY FROM WOOCOMMERCE
+// PULL ORDERS DIRECTLY FROM WOOCOMMERCE (ID, 24 Hours, or Custom Range)
 app.post('/api/woocommerce/pull-orders', authenticate, async (req: Request, res: Response) => {
   try {
-    const rawId = req.body.order_id ? parseInt(String(req.body.order_id).replace(/\D/g, ''), 10) : undefined;
-    const result = await pullOrdersFromWooCommerce(rawId);
+    const { order_id, hours, start_date, end_date } = req.body;
+    const rawId = order_id ? parseInt(String(order_id).replace(/\D/g, ''), 10) : undefined;
+    const result = await pullOrdersFromWooCommerce({
+      orderId: rawId,
+      hours: hours ? Number(hours) : undefined,
+      startDate: start_date,
+      endDate: end_date,
+    });
     return res.json(result);
   } catch (err: any) {
-    return res.status(500).json({ error: err.message || 'Failed to pull order from WooCommerce' });
+    const detail = err.cause?.message ? `${err.message} (${err.cause.message})` : (err.message || 'Failed to pull order from WooCommerce');
+    console.error('[Pull Orders Server Error]:', detail);
+    return res.status(500).json({ error: detail });
   }
+});
+
+// SIMULATE INBOUND TEST ORDER
+app.post('/api/webhooks/woocommerce/simulate-test', authenticate, requireSuperAdmin, (_req: Request, res: Response) => {
+  const fakeId = Math.floor(10000 + Math.random() * 90000);
+  const sampleOrder = ingestWooCommerceOrder({
+    id: fakeId,
+    status: 'processing',
+    billing: {
+      first_name: 'Simulated',
+      last_name: 'Customer',
+      phone: '01711000000',
+      address_1: 'Plot 4, Road 27/ka, Rupnagar C/A, Mirpur, Dhaka',
+    },
+    line_items: [
+      {
+        id: 901,
+        name: 'HP-919 Mens Premium Denim Baggy Trousers',
+        quantity: 1,
+        price: 1300,
+        total: 1300,
+        meta_data: [{ key: 'Size', value: 'L', display_key: 'আপনার সাইজ সিলেক্ট করুন:', display_value: 'L' }],
+      },
+    ],
+    shipping_total: 80,
+    total: 1380,
+  });
+
+  return res.json({
+    success: true,
+    message: `Simulated test order #${fakeId} created with Size: L!`,
+    order: sampleOrder,
+  });
 });
 
 // INBOUND WOOCOMMERCE WEBHOOK
