@@ -20,12 +20,25 @@ const getAuthHeader = () => {
 };
 
 export const api = {
-  login: async (creds: { email: string; password: string }) => {
+  // Dual-Signature Login: handles both api.login(email, password) AND api.login({ email, password })
+  login: async (arg1: any, arg2?: string) => {
+    let payload: { email: string; password: string } = { email: '', password: '' };
+
+    if (typeof arg1 === 'string') {
+      payload = { email: arg1.trim(), password: arg2 || '' };
+    } else if (typeof arg1 === 'object' && arg1 !== null) {
+      payload = {
+        email: (arg1.email || arg1.username || '').trim(),
+        password: arg1.password || '',
+      };
+    }
+
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(creds),
+      body: JSON.stringify(payload),
     });
+
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Login failed' }));
       throw new Error(err.error || 'Login failed');
