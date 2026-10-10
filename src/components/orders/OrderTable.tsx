@@ -193,6 +193,12 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     const targetOrder = orders.find(o => o.id === orderId);
     if (!targetOrder) return;
 
+    // ক্যানসেল করতে হলে অবশ্যই পপআপ ওপেন করতে হবে, ড্রপডাউন থেকে সরাসরি হবে না
+    if (nextStatus === 'cancelled') {
+      setCancellingOrder(targetOrder);
+      return;
+    }
+
     const allowed = ALLOWED_TRANSITIONS[targetOrder.status] || [];
     if (!allowed.includes(nextStatus)) {
       setNotification({
@@ -218,11 +224,37 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     }
   };
 
-  const handleConfirmCancel = async (orderId: number, reasonId: string) => {
-    await api.updateOrderStatus(orderId, 'cancelled', reasonId);
-    setNotification({ type: 'info', message: `Order #${orderId} Cancelled.` });
-    setTimeout(() => setNotification(null), 4000);
-    fetchOrders(activeStatus, searchQuery, true);
+  // ক্যানসেল কনফার্মেশন: বাধ্যতামূলক কারণ ও কাস্টম কারণ ব্যাকএন্ডে সিংক
+  const handleConfirmCancel = async (orderId: number, reasonId: string, customReason?: string) => {
+    if (!reasonId) {
+      setNotification({ type: 'error', message: 'ক্যানসেল করার কারণ নির্বাচন করা বাধ্যতামূলক।' });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('soms_token') || localStorage.getItem('token') || localStorage.getItem('auth_token') || '';
+      const res = await fetch(`/api/orders/${orderId}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          status: 'cancelled',
+          cancel_reason_id: reasonId,
+          custom_reason: customReason,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to cancel order');
+
+      setNotification({ type: 'info', message: `Order #${orderId} Cancelled.` });
+      setTimeout(() => setNotification(null), 4000);
+      fetchOrders(activeStatus, searchQuery, true);
+    } catch (err: any) {
+      setNotification({ type: 'error', message: err.message || 'Failed to cancel order' });
+    }
   };
 
   const handleSaveEdit = async (orderId: number, data: any) => {
@@ -248,7 +280,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     setIsSubmittingComment(true);
 
     try {
-      const token = localStorage.getItem('token') || localStorage.getItem('auth_token') || '';
+      const token = localStorage.getItem('soms_token') || localStorage.getItem('token') || localStorage.getItem('auth_token') || '';
       const res = await fetch(`/api/orders/${commentingOrder.id}/notes`, {
         method: 'POST',
         headers: {
@@ -639,8 +671,8 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
+                                      setOpenDropdownOrderId(null);
                                       if (stKey === 'cancelled') {
-                                        setOpenDropdownOrderId(null);
                                         setCancellingOrder(order);
                                       } else {
                                         handleStatusChange(order.id, stKey);
@@ -663,7 +695,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                       {/* Actions: Edit, Internal Comment/Note, Audit History */}
                       <td className="py-3 px-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          {/* ১। এডিট বাটন */}
                           <button
                             onClick={() => setEditingOrder(order)}
                             className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
@@ -672,7 +703,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
 
-                          {/* ২। ইন্টার্নাল কমেন্ট / কলিং নোট বাটন (সব স্ট্যাটাসেই উন্মুক্ত) */}
                           <button
                             onClick={() => {
                               setCommentingOrder(order);
@@ -684,7 +714,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                             <MessageSquare className="w-3.5 h-3.5" />
                           </button>
 
-                          {/* ৩। হিস্ট্রি ও অডিট টাইমলাইন বাটন */}
                           <button
                             onClick={() => handleOpenAudit(order)}
                             className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-indigo-400 transition"
@@ -730,7 +759,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
             </div>
 
             <form onSubmit={handleSaveComment} className="p-5 space-y-4">
-              {/* Quick Preset Buttons */}
               <div>
                 <label className="block text-[11px] font-semibold text-slate-400 mb-1.5">
                   Quick Presets (1-Tap Selection):
@@ -749,7 +777,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                 </div>
               </div>
 
-              {/* Textarea */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
                   Comment / Internal Notes:
