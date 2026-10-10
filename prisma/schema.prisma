@@ -1,0 +1,113 @@
+// Smart Order Management System (SOMS) - Prisma Schema
+// Decoupled WooCommerce Architecture with Native WooCommerce Order IDs
+
+datasource db {
+  provider = "postgresql" // Compatible with PostgreSQL / Supabase / SQLite
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  super_admin
+  moderator
+}
+
+enum UserStatus {
+  active
+  inactive
+}
+
+enum OrderStatus {
+  pending
+  approved
+  hold
+  cancelled
+  completed
+}
+
+enum ActionType {
+  status_change
+  order_edit
+  order_created
+  cancelled
+}
+
+model User {
+  id            String             @id @default(cuid())
+  name          String
+  email         String             @unique
+  password_hash String
+  role          Role               @default(moderator)
+  status        UserStatus         @default(active)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  orders        Order[]            @relation("OrderUpdatedBy")
+  activityLogs  OrderActivityLog[]
+
+  @@map("users")
+}
+
+model Setting {
+  id                 String   @id @default(cuid())
+  wc_store_url       String   @default("")
+  wc_consumer_key    String   @default("")
+  wc_consumer_secret String   @default("")
+  wc_webhook_secret  String   @default("")
+  updatedAt          DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model CancelReason {
+  id          String   @id @default(cuid())
+  reason_text String
+  is_active   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  orders      Order[]
+
+  @@map("cancel_reasons")
+}
+
+model Order {
+  // STRICT RULE: Primary Key is directly the integer WooCommerce Order ID (e.g. 7103)
+  // No arbitrary internal IDs are used anywhere in the system.
+  id               Int                @id
+  customer_name    String
+  phone            String
+  address          String
+  items_json       Json               // Array of { product_id, name, variation, quantity, price, total }
+  total_amount     Float
+  shipping_fee     Float              @default(0)
+  status           OrderStatus        @default(pending)
+  cancel_reason_id String?
+  cancel_reason    CancelReason?      @relation(fields: [cancel_reason_id], references: [id])
+  updated_by_id    String?
+  updated_by       User?              @relation("OrderUpdatedBy", fields: [updated_by_id], references: [id])
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  activityLogs     OrderActivityLog[]
+
+  @@index([status])
+  @@index([phone])
+  @@index([customer_name])
+  @@map("orders")
+}
+
+model OrderActivityLog {
+  id          String     @id @default(cuid())
+  order_id    Int        // References Order.id (WooCommerce Order ID)
+  order       Order      @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  user_id     String?
+  user        User?      @relation(fields: [user_id], references: [id])
+  user_name   String
+  action_type ActionType
+  description String     // e.g. "Status changed from Pending to Approved", "Phone changed from 017.. to 018.."
+  timestamp   DateTime   @default(now())
+
+  @@index([order_id])
+  @@index([timestamp])
+  @@map("order_activity_logs")
+}

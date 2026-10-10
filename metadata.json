@@ -1,0 +1,6 @@
+{
+  "name": "Smart Order Management System (SOMS)",
+  "description": "Enterprise-grade, ultra-lightweight, zero-latency Order Management System decoupled from WooCommerce with instant two-way synchronization and native WooCommerce Order IDs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
