@@ -11,6 +11,7 @@ import {
   Edit2,
   History,
   Package,
+  RotateCw,
 } from 'lucide-react';
 
 interface OrderTableProps {
@@ -202,53 +203,72 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       )}
 
-      {/* Control Bar: Status Tabs & High-Speed Search */}
-      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-slate-900/90 p-3 rounded-xl border border-slate-800 shadow-sm">
-        {/* Status Tabs with live count badges */}
-        <div className="flex items-center gap-1 overflow-x-auto pb-1 lg:pb-0">
-          {[
-            { key: 'all', label: 'All Orders', count: counts.all },
-            { key: 'pending', label: 'Pending', count: counts.pending },
-            { key: 'approved', label: 'Approved', count: counts.approved },
-            { key: 'hold', label: 'Hold', count: counts.hold },
-            { key: 'completed', label: 'Completed', count: counts.completed },
-            { key: 'cancelled', label: 'Cancelled', count: counts.cancelled },
-          ].map(tab => (
+      {/* Row 1: Large Boxed Status Filters (Reference Dashboard Style) */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 select-none">
+        {[
+          { key: 'all', label: 'All', count: counts.all },
+          { key: 'pending', label: 'Pending', count: counts.pending },
+          { key: 'approved', label: 'Approved', count: counts.approved },
+          { key: 'hold', label: 'Hold', count: counts.hold },
+          { key: 'completed', label: 'Completed', count: counts.completed },
+          { key: 'cancelled', label: 'Cancelled', count: counts.cancelled },
+        ].map(tab => {
+          const isActive = activeStatus === tab.key;
+
+          return (
             <button
               key={tab.key}
               onClick={() => {
                 setActiveStatus(tab.key);
                 fetchOrders(tab.key, searchQuery);
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition ${
-                activeStatus === tab.key
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-all border shadow-xs ${
+                isActive
+                  ? 'bg-teal-600 text-white border-teal-500 shadow-md shadow-teal-900/30'
+                  : 'bg-slate-900/90 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white hover:bg-slate-850'
               }`}
             >
-              <span>{tab.label}</span>
+              <span className="font-medium">{tab.label}</span>
+              
+              {/* Reference Style Count Badge */}
               <span
-                className={`font-mono text-[11px] tabular-nums px-1.5 py-0.2 rounded-full ${
-                  activeStatus === tab.key
-                    ? 'bg-indigo-700/80 text-white'
-                    : 'bg-slate-800 text-slate-400'
+                className={`font-mono text-[11px] tabular-nums px-2 py-0.5 rounded border ${
+                  isActive
+                    ? 'bg-teal-700/80 text-white border-teal-400/40 font-bold'
+                    : 'bg-slate-800 text-slate-400 border-slate-700/80 font-normal'
                 }`}
               >
                 {tab.count}
               </span>
             </button>
-          ))}
+          );
+        })}
+      </div>
+
+      {/* Row 2: Search Bar & Actions Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/80 p-3 rounded-xl border border-slate-800 shadow-sm">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => fetchOrders(activeStatus, searchQuery)}
+            title="Reload Orders"
+            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition border border-slate-700/60"
+          >
+            <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
+          <span className="text-xs text-slate-400 font-medium hidden sm:inline">
+            Showing <strong className="text-white font-mono">{orders.length}</strong> orders
+          </span>
         </div>
 
-        {/* High-speed Search by #Order ID, Phone, Customer */}
-        <div className="relative min-w-[280px]">
+        {/* High-speed Search Input */}
+        <div className="relative flex-1 max-w-md">
           <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchQuery}
             onChange={handleSearchChange}
-            placeholder="Search by #7103, Phone, or Name..."
-            className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition"
+            placeholder="Type invoice or customer phone / name..."
+            className="w-full pl-9 pr-8 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-teal-500 transition"
           />
           {searchQuery && (
             <button
@@ -329,7 +349,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                 <tr>
                   <td colSpan={7} className="py-12 text-center text-slate-500">
                     <div className="flex flex-col items-center justify-center gap-2">
-                      <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                      <div className="w-5 h-5 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
                       <span>Loading high-concurrency order ledger...</span>
                     </div>
                   </td>
@@ -353,7 +373,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   const phoneKey = `phone_${order.id}`;
                   const addrKey = `addr_${order.id}`;
 
-                  // Sanitize phone for clean copying
                   const cleanPhone = order.phone.replace(/[^0-9+]/g, '');
 
                   return (
@@ -388,7 +407,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                       {/* Customer Details with 1-Click Copy Buttons */}
                       <td className="py-3 px-3">
                         <div className="space-y-1">
-                          {/* Name + 1-Click Copy */}
                           <div className="flex items-center gap-1.5">
                             <span className="font-semibold text-slate-200 truncate max-w-[160px]">
                               {order.customer_name}
@@ -409,7 +427,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                             </button>
                           </div>
 
-                          {/* Phone + 1-Click Copy */}
                           <div className="flex items-center gap-1.5">
                             <span className="font-mono text-slate-400 text-xs">
                               {order.phone}
@@ -446,7 +463,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                             {copiedKeys[addrKey] ? (
                               <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-400">
                                 <Check className="w-3.5 h-3.5" />
-                                <span>Copied!</span>
+                                  <span>Copied!</span>
                               </span>
                             ) : (
                               <Copy className="w-3.5 h-3.5" />
@@ -542,7 +559,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         <div className="px-4 py-3 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
           <div>
             Showing <span className="font-mono font-semibold text-slate-200">{orders.length}</span> orders
-            {activeStatus !== 'all' && <span> in status <span className="capitalize text-indigo-400 font-medium">{activeStatus}</span></span>}
+            {activeStatus !== 'all' && <span> in status <span className="capitalize text-teal-400 font-medium">{activeStatus}</span></span>}
           </div>
           <div className="font-mono text-[11px] text-slate-500">
             Zero-Latency SOMS · Two-Way WC Sync Active
