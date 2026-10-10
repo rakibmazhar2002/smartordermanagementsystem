@@ -13,6 +13,7 @@ import {
   PauseCircle,
   Truck,
   XCircle,
+  Zap,
 } from 'lucide-react';
 
 export const ExecutiveDashboard: React.FC = () => {
@@ -80,13 +81,14 @@ export const ExecutiveDashboard: React.FC = () => {
     );
   }
 
-  const pulse = data?.pulse || {
+  const pulse = (data?.pulse as any) || {
     total: 0,
     pending: 0,
     approved: 0,
     hold: 0,
     completed: 0,
     cancelled: 0,
+    metaCapiDispatched: 0,
     pendingPercent: 0,
     approvedPercent: 0,
     holdPercent: 0,
@@ -105,7 +107,7 @@ export const ExecutiveDashboard: React.FC = () => {
             <span>Executive Analytics & Moderator Performance</span>
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            Meta Ads Attribution (Order Date) · Operational Moderation (Action Date)
+            Meta CAPI (Order Created Date) · Operations & Moderation (Action Modified Date)
           </p>
         </div>
 
@@ -175,12 +177,13 @@ export const ExecutiveDashboard: React.FC = () => {
             {getRangeLabel()} · Volume & Conversion Health
           </div>
           <span className="text-[11px] text-slate-500 hidden sm:inline">
-            Meta CAPI matches Order Date · Cancellations reflect Modified Window
+            Meta CAPI matches Order Created Date · Operational Statuses reflect Modified Window
           </span>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          {/* Total Orders (Created Date) */}
+        {/* 7 Metric Cards Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+          {/* 1. Total (Modified Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Total Ingested</span>
@@ -190,11 +193,11 @@ export const ExecutiveDashboard: React.FC = () => {
               <div className="text-2xl font-bold font-mono text-white tabular-nums">
                 {pulse.total}
               </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">Order Created Date</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">Action Modified Date</div>
             </div>
           </div>
 
-          {/* Pending */}
+          {/* 2. Pending (Modified Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Awaiting Call</span>
@@ -210,10 +213,10 @@ export const ExecutiveDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Approved */}
+          {/* 3. Approved (Modified Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
-              <span>Confirmed</span>
+              <span>Approved</span>
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             </div>
             <div className="mt-2">
@@ -221,12 +224,12 @@ export const ExecutiveDashboard: React.FC = () => {
                 {pulse.approved}
               </div>
               <div className="text-[11px] text-emerald-500 mt-0.5">
-                <span className="font-mono tabular-nums">{pulse.approvedPercent}%</span> conversion
+                <span className="font-mono tabular-nums">{pulse.approvedPercent}%</span> (Action Date)
               </div>
             </div>
           </div>
 
-          {/* On Hold */}
+          {/* 4. On Hold (Modified Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>On Hold</span>
@@ -242,7 +245,7 @@ export const ExecutiveDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Completed (Meta CAPI Purchase - Matches Meta Ads Manager) */}
+          {/* 5. Completed (Modified Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Completed</span>
@@ -252,11 +255,25 @@ export const ExecutiveDashboard: React.FC = () => {
               <div className="text-2xl font-bold font-mono text-cyan-400 tabular-nums">
                 {pulse.completed}
               </div>
-              <div className="text-[11px] text-cyan-400 font-medium mt-0.5">Meta CAPI Dispatched</div>
+              <div className="text-[11px] text-cyan-400 font-medium mt-0.5">Courier Delivered</div>
             </div>
           </div>
 
-          {/* Cancelled (Action / Modified Date) */}
+          {/* 6. Meta CAPI Dispatched (অর্ডার ক্রিয়েটেড ডেইট অনুযায়ী) */}
+          <div className="bg-slate-900 border border-violet-900/60 bg-gradient-to-b from-slate-900 to-violet-950/20 rounded-xl p-3.5 flex flex-col justify-between shadow-xs">
+            <div className="flex items-center justify-between text-violet-300 text-xs">
+              <span className="font-medium">Meta CAPI Dispatched</span>
+              <Zap className="w-3.5 h-3.5 text-violet-400" />
+            </div>
+            <div className="mt-2">
+              <div className="text-2xl font-bold font-mono text-violet-400 tabular-nums">
+                {pulse.metaCapiDispatched ?? pulse.approved}
+              </div>
+              <div className="text-[11px] text-violet-400/90 font-medium mt-0.5">Order Created Date</div>
+            </div>
+          </div>
+
+          {/* 7. Cancelled (Modified Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Cancelled</span>
@@ -278,14 +295,14 @@ export const ExecutiveDashboard: React.FC = () => {
               <DollarSign className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-xs text-slate-400">Confirmed Gross Pipeline Revenue (Meta Attributed)</div>
+              <div className="text-xs text-slate-400">Confirmed Gross Pipeline Revenue (Action Window)</div>
               <div className="text-xl font-bold font-mono text-white tabular-nums">
                 {pulse.grossRevenue.toLocaleString()} BDT
               </div>
             </div>
           </div>
           <div className="text-right text-xs text-slate-400 hidden sm:block">
-            <span>Approved & Delivered Orders of this Order Date</span>
+            <span>Approved & Delivered Orders in this Action Window</span>
           </div>
         </div>
       </div>
@@ -310,7 +327,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 <tr className="border-b border-slate-800 text-[10px] text-slate-400 uppercase tracking-wider">
                   <th className="py-2.5 px-2">Staff Member</th>
                   <th className="py-2.5 px-2 text-right">Est. Calls</th>
-                  <th className="py-2.5 px-2 text-right">Confirmed</th>
+                  <th className="py-2.5 px-2 text-right">Approved</th>
                   <th className="py-2.5 px-2 text-right">Edits</th>
                   <th className="py-2.5 px-2 text-right">Cancellations</th>
                 </tr>
