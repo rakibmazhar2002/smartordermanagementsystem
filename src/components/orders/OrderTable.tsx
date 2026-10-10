@@ -16,11 +16,55 @@ import {
   Clock,
   Calendar,
   Hash,
+  ChevronDown,
 } from 'lucide-react';
 
 interface OrderTableProps {
   onRefreshTrigger?: number;
 }
+
+const STATUS_CONFIG: Record<
+  OrderStatus,
+  { label: string; dot: string; text: string; bgBtn: string; hoverBg: string }
+> = {
+  pending: {
+    label: 'Pending',
+    dot: 'bg-amber-400',
+    text: 'text-amber-400',
+    bgBtn: 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20',
+    hoverBg: 'hover:bg-amber-500/10',
+  },
+  approved: {
+    label: 'Approved',
+    dot: 'bg-emerald-400',
+    text: 'text-emerald-400',
+    bgBtn: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20',
+    hoverBg: 'hover:bg-emerald-500/10',
+  },
+  hold: {
+    label: 'On Hold',
+    dot: 'bg-indigo-400',
+    text: 'text-indigo-400',
+    bgBtn: 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/20',
+    hoverBg: 'hover:bg-indigo-500/10',
+  },
+  completed: {
+    label: 'Completed',
+    dot: 'bg-cyan-400',
+    text: 'text-cyan-400',
+    bgBtn: 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20',
+    hoverBg: 'hover:bg-cyan-500/10',
+  },
+  cancelled: {
+    label: 'Cancelled',
+    dot: 'bg-rose-400',
+    text: 'text-rose-400',
+    bgBtn: 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20',
+    hoverBg: 'hover:bg-rose-500/10',
+  },
+};
+
+const STATUS_LIST: OrderStatus[] = ['pending', 'approved', 'hold', 'completed', 'cancelled'];
 
 export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -32,12 +76,15 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     completed: 0,
     cancelled: 0,
   });
-  const [activeStatus, setActiveStatus] = useState<string>('all');
+
+  // ডিফল্টভাবে 'pending' রাখা হয়েছে যাতে সাইটে ঢুকলে বা রিফ্রেশে পেন্ডিং অর্ডার দেখায়
+  const [activeStatus, setActiveStatus] = useState<string>('pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [cancelReasons, setCancelReasons] = useState<CancelReason[]>([]);
 
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
+  const [openDropdownOrderId, setOpenDropdownOrderId] = useState<number | null>(null);
 
   // Pull Order Modal States
   const [isPullModalOpen, setIsPullModalOpen] = useState(false);
@@ -54,6 +101,17 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
 
   const [copiedKeys, setCopiedKeys] = useState<{ [key: string]: boolean }>({});
   const [notification, setNotification] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
+
+  // বাইরে ক্লিক করলে ড্রপডাউন বন্ধ করার হ্যান্ডলার
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('.status-dropdown-wrapper')) {
+        setOpenDropdownOrderId(null);
+      }
+    };
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, []);
 
   const fetchOrders = async (statusTab = activeStatus, search = searchQuery, silent = false) => {
     if (!silent) setIsLoading(true);
@@ -107,6 +165,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   };
 
   const handleStatusChange = async (orderId: number, nextStatus: OrderStatus) => {
+    setOpenDropdownOrderId(null);
     try {
       setOrders(prev =>
         prev.map(o => (o.id === orderId ? { ...o, status: nextStatus, updatedAt: new Date().toISOString() } : o))
@@ -154,14 +213,14 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
 
       if (pullMode === 'id') {
         if (!pullOrderIdInput.trim()) {
-          throw new Error('দয়া করে অর্ডার আইডিটি লিখুন (যেমন: 12463)।');
+          throw new Error('দয়া করে অর্ডার আইডিটি লিখুন (যেমন: 12463)।');
         }
         payload = { orderId: pullOrderIdInput.trim() };
       } else if (pullMode === 'last24') {
         payload = { hours: 24 };
       } else if (pullMode === 'custom') {
         if (!pullStartDate) {
-          throw new Error('শুরুর তারিখ ও সময় নির্বাচন করুন।');
+          throw new Error('শুরুর তারিখ ও সময় নির্বাচন করুন।');
         }
         payload = {
           startDate: new Date(pullStartDate).toISOString(),
@@ -223,11 +282,11 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       )}
 
-      {/* Row 1: Status Filter Tabs */}
+      {/* Row 1: Status Filter Tabs (ডিফল্ট পেন্ডিং সিলেক্টেড থাকবে) */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 select-none">
         {[
-          { key: 'all', label: 'All', count: counts.all },
           { key: 'pending', label: 'Pending', count: counts.pending },
+          { key: 'all', label: 'All', count: counts.all },
           { key: 'approved', label: 'Approved', count: counts.approved },
           { key: 'hold', label: 'Hold', count: counts.hold },
           { key: 'completed', label: 'Completed', count: counts.completed },
@@ -243,11 +302,11 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
               }}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-all border shadow-xs ${
                 isActive
-                  ? 'bg-teal-600 text-white border-teal-500 shadow-md shadow-teal-900/30'
+                  ? 'bg-teal-600 text-white border-teal-500 shadow-md shadow-teal-900/30 font-semibold'
                   : 'bg-slate-900/90 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white hover:bg-slate-850'
               }`}
             >
-              <span className="font-medium">{tab.label}</span>
+              <span>{tab.label}</span>
               <span
                 className={`font-mono text-[11px] tabular-nums px-2 py-0.5 rounded border ${
                   isActive
@@ -328,8 +387,8 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
       )}
 
       {/* Orders Table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
-        <div className="overflow-x-auto">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-visible shadow-xl">
+        <div className="overflow-x-auto min-h-[360px]">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-950/80 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
@@ -368,12 +427,16 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   </td>
                 </tr>
               ) : (
-                orders.map(order => {
+                orders.map((order, index) => {
                   const isSelected = selectedOrderIds.includes(order.id);
                   const nameKey = `name_${order.id}`;
                   const phoneKey = `phone_${order.id}`;
                   const addrKey = `addr_${order.id}`;
                   const cleanPhone = order.phone.replace(/[^0-9+]/g, '');
+
+                  const cfg = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending;
+                  const isDropdownOpen = openDropdownOrderId === order.id;
+                  const isNearBottom = index >= orders.length - 2 && orders.length > 3;
 
                   return (
                     <tr
@@ -451,32 +514,61 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         </div>
                       </td>
 
-                      <td className="py-3 px-3 whitespace-nowrap">
-                        <select
-                          value={order.status}
-                          onChange={(e) => {
-                            const newStatus = e.target.value as OrderStatus;
-                            if (newStatus === 'cancelled') setCancellingOrder(order);
-                            else handleStatusChange(order.id, newStatus);
-                          }}
-                          className={`text-xs font-semibold rounded-lg px-2.5 py-1 border cursor-pointer transition ${
-                            order.status === 'pending'
-                              ? 'bg-amber-950/40 border-amber-900/60 text-amber-400'
-                              : order.status === 'approved'
-                              ? 'bg-emerald-950/40 border-emerald-900/60 text-emerald-400'
-                              : order.status === 'hold'
-                              ? 'bg-indigo-950/40 border-indigo-900/60 text-indigo-400'
-                              : order.status === 'completed'
-                              ? 'bg-cyan-950/40 border-cyan-900/60 text-cyan-400'
-                              : 'bg-red-950/40 border-red-900/60 text-red-400'
-                          }`}
-                        >
-                          <option value="pending">Pending</option>
-                          <option value="approved">Approved</option>
-                          <option value="hold">On Hold</option>
-                          <option value="completed">Completed</option>
-                          <option value="cancelled">Cancelled</option>
-                        </select>
+                      {/* Custom Dark Theme Status Dropdown (কোনো মিক্সড কালার বা নেটিভ সিলেক্ট ইস্যু নেই) */}
+                      <td className="py-3 px-3 whitespace-nowrap relative status-dropdown-wrapper">
+                        <div className="relative inline-block text-left">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenDropdownOrderId(isDropdownOpen ? null : order.id);
+                            }}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition shadow-sm ${cfg.bgBtn}`}
+                          >
+                            <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                            <span>{cfg.label}</span>
+                            <ChevronDown className="w-3.5 h-3.5 opacity-60 ml-0.5" />
+                          </button>
+
+                          {/* কাস্টম পপআপ লিস্ট */}
+                          {isDropdownOpen && (
+                            <div
+                              className={`absolute left-0 ${
+                                isNearBottom ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+                              } w-36 bg-[#0c101c] border border-slate-700/90 rounded-xl shadow-2xl py-1 z-50 backdrop-blur-md animate-in fade-in zoom-in-95`}
+                            >
+                              {STATUS_LIST.map((stKey) => {
+                                const stCfg = STATUS_CONFIG[stKey];
+                                const isCurrent = order.status === stKey;
+
+                                return (
+                                  <button
+                                    key={stKey}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (stKey === 'cancelled') {
+                                        setOpenDropdownOrderId(null);
+                                        setCancellingOrder(order);
+                                      } else {
+                                        handleStatusChange(order.id, stKey);
+                                      }
+                                    }}
+                                    className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium transition ${
+                                      stCfg.hoverBg
+                                    } ${isCurrent ? 'bg-slate-800/80 font-semibold' : ''}`}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span className={`w-2 h-2 rounded-full ${stCfg.dot}`} />
+                                      <span className={stCfg.text}>{stCfg.label}</span>
+                                    </div>
+                                    {isCurrent && <Check className="w-3.5 h-3.5 text-slate-300" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       <td className="py-3 px-3 text-right whitespace-nowrap">
@@ -498,7 +590,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       </div>
 
-      {/* Advanced Pull Order Modal (Single ID, Last 24 Hours, Custom Range) */}
+      {/* Advanced Pull Order Modal */}
       {isPullModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
           <div className="bg-[#161a26] border border-slate-800 rounded-xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
