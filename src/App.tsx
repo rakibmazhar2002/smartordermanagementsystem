@@ -9,13 +9,13 @@ import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext.tsx';
 import { LoginView } from './components/auth/LoginView.tsx';
 import { Navbar } from './components/Navbar.tsx';
-import { Footer } from './components/Footer.tsx';
 import { OrderTable } from './components/orders/OrderTable.tsx';
 import { ExecutiveDashboard } from './components/admin/ExecutiveDashboard.tsx';
 import { CancelReasonsManager } from './components/admin/CancelReasonsManager.tsx';
 import { ModeratorManager } from './components/admin/ModeratorManager.tsx';
 import { WooCommerceSettings } from './components/admin/WooCommerceSettings.tsx';
 import { api } from './lib/api.ts';
+import { Menu } from 'lucide-react';
 
 const AppContent: React.FC = () => {
   const { user, isLoading, isSuperAdmin } = useAuth();
@@ -23,7 +23,6 @@ const AppContent: React.FC = () => {
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
   const [isSimulating, setIsSimulating] = useState(false);
 
-  // Auto-redirect moderator to orders if they try to access admin tabs
   const handleSelectTab = (tab: string) => {
     if (!isSuperAdmin && tab !== 'orders') {
       setCurrentTab('orders');
@@ -37,7 +36,6 @@ const AppContent: React.FC = () => {
     try {
       const res = await api.simulateWebhookOrder();
       setRefreshTrigger(prev => prev + 1);
-      // If not on orders tab, switch to orders tab
       setCurrentTab('orders');
       alert(`WooCommerce order.created Webhook Ingested!\nNative Order ID #${res.order.id} for "${res.order.customer_name}" stored in SOMS.`);
     } catch (err: any) {
@@ -62,11 +60,11 @@ const AppContent: React.FC = () => {
     return <LoginView />;
   }
 
-  // Moderator restricted from admin sections
   const safeTab = (!isSuperAdmin && currentTab !== 'orders') ? 'orders' : currentTab;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+    <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans">
+      {/* ১. বামপাশের ভার্টিক্যাল সাইডবার */}
       <Navbar
         currentTab={safeTab}
         onSelectTab={handleSelectTab}
@@ -74,17 +72,45 @@ const AppContent: React.FC = () => {
         isSimulating={isSimulating}
       />
 
-      <main className="grow max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
-        {safeTab === 'orders' && <OrderTable onRefreshTrigger={refreshTrigger} />}
-        {safeTab === 'analytics' && isSuperAdmin && <ExecutiveDashboard />}
-        {safeTab === 'reasons' && isSuperAdmin && <CancelReasonsManager />}
-        {safeTab === 'moderators' && isSuperAdmin && <ModeratorManager />}
-        {safeTab === 'settings' && isSuperAdmin && (
-          <WooCommerceSettings onOrderCreated={() => setRefreshTrigger(prev => prev + 1)} />
-        )}
-      </main>
+      {/* ২. ডানপাশের ফুল স্ক্রিন কন্টেন্ট এরিয়া */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
+        {/* Top Header Bar */}
+        <header className="h-14 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between px-6 shrink-0 backdrop-blur z-10">
+          <div className="flex items-center gap-3">
+            <button className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
+              <Menu className="w-5 h-5" />
+            </button>
+            <h1 className="text-sm font-semibold text-slate-200 capitalize tracking-wide">
+              {safeTab === 'orders'
+                ? 'Orders Ledger'
+                : safeTab === 'analytics'
+                ? 'Executive Analytics'
+                : safeTab === 'reasons'
+                ? 'Cancellation Reasons'
+                : safeTab === 'moderators'
+                ? 'Moderators Directory'
+                : 'WooCommerce API Bridge'}
+            </h1>
+          </div>
 
-      <Footer />
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/80 px-2 py-0.5 rounded-full">
+              Live Sync
+            </span>
+          </div>
+        </header>
+
+        {/* Full-width Scrollable Main Workspace */}
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 w-full">
+          {safeTab === 'orders' && <OrderTable onRefreshTrigger={refreshTrigger} />}
+          {safeTab === 'analytics' && isSuperAdmin && <ExecutiveDashboard />}
+          {safeTab === 'reasons' && isSuperAdmin && <CancelReasonsManager />}
+          {safeTab === 'moderators' && isSuperAdmin && <ModeratorManager />}
+          {safeTab === 'settings' && isSuperAdmin && (
+            <WooCommerceSettings onOrderCreated={() => setRefreshTrigger(prev => prev + 1)} />
+          )}
+        </main>
+      </div>
     </div>
   );
 };
