@@ -20,8 +20,15 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Body parser
-app.use(express.json({ limit: '10mb' }));
+// Body parser with rawBody preservation for WooCommerce Webhook HMAC verification
+app.use(
+  express.json({
+    limit: '10mb',
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 
 // Ensure DB is initialized
@@ -183,20 +190,41 @@ app.post('/api/woocommerce/test-connection', authenticate, requireSuperAdmin, as
 // INBOUND WOOCOMMERCE WEBHOOK
 // ----------------------------------------------------
 app.post('/api/webhooks/woocommerce/order-created', (req: Request, res: Response) => {
+  const topic = req.headers['x-wc-webhook-topic'] as string | undefined;
+
+  // 1. WooCommerce Ping / Handshake Handler (WordPress Webhook সেভ করার সময় স্বয়ংক্রিয়ভাবে 200 OK পাঠাবে)
+  if (topic === 'action.woocommerce_webhook_ping' || (!req.body?.id && req.body?.webhook_id)) {
+    return res.status(200).json({
+      success: true,
+      message: 'WooCommerce Webhook ping acknowledged successfully.',
+    });
+  }
+
+  // 2. HMAC Signature Verification
   const signature = req.headers['x-wc-webhook-signature'] as string | undefined;
   const db = getDb();
   const secret = db.settings.wc_webhook_secret;
 
-  const isValid = verifyWooCommerceWebhookSignature(JSON.stringify(req.body), signature, secret);
-  if (!isValid && secret) {
-    return res.status(401).json({ error: 'Invalid HMAC signature' });
+  if (secret && signature) {
+    const rawBody = (req as any).rawBody ? (req as any).rawBody.toString('utf8') : JSON.stringify(req.body);
+    const isValid = verifyWooCommerceWebhookSignature(rawBody, signature, secret);
+
+    if (!isValid) {
+      // Fallback with JSON stringified format
+      const isFallbackValid = verifyWooCommerceWebhookSignature(JSON.stringify(req.body), signature, secret);
+      if (!isFallbackValid) {
+        return res.status(401).json({ error: 'Invalid HMAC signature' });
+      }
+    }
   }
 
+  // 3. Payload Validation
   const payload = req.body;
   if (!payload || !payload.id) {
     return res.status(400).json({ error: 'Invalid WooCommerce order payload. id is required.' });
   }
 
+  // 4. Ingest Order into Local SOMS Store
   const newOrder = ingestWooCommerceOrder(payload);
 
   return res.status(200).json({
@@ -408,7 +436,6 @@ app.get('/api/orders', authenticate, (req: Request, res: Response) => {
     const cleanIdTerm = term.replace(/^#/, '');
 
     filtered = filtered.filter(o => {
-      // STRICT: Match WooCommerce Order ID e.g. #7103 or 7103
       const idMatch = String(o.id).includes(cleanIdTerm);
       const phoneMatch = o.phone.toLowerCase().includes(term);
       const nameMatch = o.customer_name.toLowerCase().includes(term);
@@ -489,7 +516,6 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
     return res.status(404).json({ error: `Order #${rawId} not found` });
   }
 
-  // Strict check: if cancelled, cancel_reason_id is MANDATORY
   let cancelReasonText = '';
   if (status === 'cancelled') {
     if (!cancel_reason_id) {
@@ -510,7 +536,6 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
   order.updated_by_id = user.id;
   order.updatedAt = new Date().toISOString();
 
-  // Audit Log Entry with field-level clarity
   let logDescription = `Status changed from ${prevStatus.toUpperCase()} to ${status.toUpperCase()} by ${user.name}.`;
   if (status === 'cancelled') {
     logDescription = `Order #${rawId} Cancelled. Reason: "${cancelReasonText}". Appended internal note to WooCommerce.`;
@@ -532,7 +557,6 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
 
   saveDb();
 
-  // Outbound 2-Way WooCommerce Sync
   const syncResult = await syncOrderToWooCommerce(rawId, {
     status,
     cancelReasonText: status === 'cancelled' ? cancelReasonText : undefined,
@@ -546,7 +570,7 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
   });
 });
 
-// Update Order Details (Customer Name, Phone, Address, Shipping Cost, Quantities)
+// Update Order Details
 app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => {
   const rawId = parseInt(req.params.id, 10);
   if (isNaN(rawId)) {
@@ -589,13 +613,11 @@ app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => 
     order.items_json = items_json;
   }
 
-  // Recalculate total
   const itemsTotal = order.items_json.reduce((sum, item) => sum + (Number(item.price) * Number(item.quantity)), 0);
   order.total_amount = itemsTotal + order.shipping_fee;
   order.updated_by_id = user.id;
   order.updatedAt = new Date().toISOString();
 
-  // Create audit log if any diffs
   if (diffs.length > 0) {
     const logDescription = `Order #${rawId} edited by ${user.name}: ${diffs.join('; ')}.`;
     db.activityLogs.unshift({
@@ -611,7 +633,6 @@ app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => 
 
   saveDb();
 
-  // Outbound 2-way sync to WooCommerce REST API
   const syncResult = await syncOrderToWooCommerce(rawId, {
     customer_name: order.customer_name,
     phone: order.phone,
@@ -699,13 +720,12 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
 
   const endTime = customEnd && range === 'custom' ? new Date(customEnd) : now;
 
-  // Filter orders in range
   const scopedOrders = db.orders.filter(o => {
     const d = new Date(o.createdAt);
     return d >= startTime && d <= endTime;
   });
 
-  const total = scopedOrders.length || 1; // avoid division by zero
+  const total = scopedOrders.length || 1;
   const pending = scopedOrders.filter(o => o.status === 'pending').length;
   const approved = scopedOrders.filter(o => o.status === 'approved').length;
   const hold = scopedOrders.filter(o => o.status === 'hold').length;
@@ -731,7 +751,6 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     grossRevenue,
   };
 
-  // Moderator Performance: Aggregate actions from activity logs
   const moderators = db.users.filter(u => u.role === 'moderator' || u.role === 'super_admin');
   const moderatorPerformance = moderators.map(mod => {
     const modLogs = db.activityLogs.filter(l => l.user_id === mod.id);
@@ -751,7 +770,6 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     };
   });
 
-  // Cancellation Root Cause Analysis
   const cancelledOrders = scopedOrders.filter(o => o.status === 'cancelled');
   const cancelReasonsMap = new Map(db.cancelReasons.map(r => [r.id, r.reason_text]));
   const reasonCounts: Record<string, number> = {};
