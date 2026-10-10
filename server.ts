@@ -274,7 +274,6 @@ const handleWooCommerceWebhook = (req: Request, res: Response) => {
   });
 };
 
-// উভয় ইভেন্টই এখন হ্যান্ডেল হবে
 app.post('/api/webhooks/woocommerce/order-created', handleWooCommerceWebhook);
 app.post('/api/webhooks/woocommerce/order-updated', handleWooCommerceWebhook);
 
@@ -671,7 +670,7 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
   return res.json({ success: true, count: updatedCount });
 });
 
-// ANALYTICS DASHBOARD
+// ANALYTICS DASHBOARD (বাংলাদেশ টাইমজোন + নিখুঁত রেঞ্জ ফিল্টারিং)
 app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: Response) => {
   const db = getDb();
   const range = (req.query.range as string) || 'today';
@@ -679,27 +678,58 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const customEnd = req.query.endDate as string | undefined;
 
   const now = new Date();
-  let startTime = new Date();
+  // বাংলাদেশ টাইমজোন (UTC+6) রূপান্তর
+  const BD_OFFSET_MS = 6 * 60 * 60 * 1000;
+  const bdNow = new Date(now.getTime() + BD_OFFSET_MS);
+
+  const y = bdNow.getUTCFullYear();
+  const m = bdNow.getUTCMonth();
+  const d = bdNow.getUTCDate();
+
+  // নির্দিষ্ট দিন ও সময়ের জন্য সঠিক UTC টাইম নির্ধারণ
+  const makeBdUtc = (year: number, month: number, day: number, hours: number, minutes: number, seconds: number, ms: number) => {
+    return new Date(Date.UTC(year, month, day, hours, minutes, seconds, ms) - BD_OFFSET_MS);
+  };
+
+  let startTime: Date;
+  let endTime: Date;
 
   if (range === 'today') {
-    startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // আজকের ০০:০০:০০ থেকে রাত ২৩:৫৯:৫৯
+    startTime = makeBdUtc(y, m, d, 0, 0, 0, 0);
+    endTime = makeBdUtc(y, m, d, 23, 59, 59, 999);
   } else if (range === 'yesterday') {
-    startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    // শুধুমাত্র গতকালের ০০:০০:০০ থেকে গতকাল রাত ২৩:৫৯:৫৯ (আজকের কোনো ডেটা আসবে না)
+    startTime = makeBdUtc(y, m, d - 1, 0, 0, 0, 0);
+    endTime = makeBdUtc(y, m, d - 1, 23, 59, 59, 999);
   } else if (range === 'last7days') {
-    startTime = new Date(now.getTime() - 7 * 86400000);
+    // গত ৭ দিন (শুরু থেকে আজকের শেষ পর্যন্ত)
+    startTime = makeBdUtc(y, m, d - 6, 0, 0, 0, 0);
+    endTime = makeBdUtc(y, m, d, 23, 59, 59, 999);
   } else if (range === 'thismonth') {
-    startTime = new Date(now.getFullYear(), now.getMonth(), 1);
+    // চলতি মাসের ১ তারিখ থেকে আজকের শেষ পর্যন্ত
+    startTime = makeBdUtc(y, m, 1, 0, 0, 0, 0);
+    endTime = makeBdUtc(y, m, d, 23, 59, 59, 999);
   } else if (range === 'custom' && customStart) {
     startTime = new Date(customStart);
+    if (customEnd) {
+      const endD = new Date(customEnd);
+      endTime = customEnd.includes('T') ? endD : new Date(endD.getFullYear(), endD.getMonth(), endD.getDate(), 23, 59, 59, 999);
+    } else {
+      endTime = now;
+    }
   } else {
-    startTime = new Date(now.getTime() - 7 * 86400000);
+    startTime = makeBdUtc(y, m, d, 0, 0, 0, 0);
+    endTime = makeBdUtc(y, m, d, 23, 59, 59, 999);
   }
 
-  const endTime = customEnd && range === 'custom' ? new Date(customEnd) : now;
+  const startMs = startTime.getTime();
+  const endMs = endTime.getTime();
 
+  // ফিল্টার করা অর্ডার তালিকা
   const scopedOrders = db.orders.filter(o => {
-    const d = new Date(o.createdAt);
-    return d >= startTime && d <= endTime;
+    const t = new Date(o.createdAt).getTime();
+    return !isNaN(t) && t >= startMs && t <= endMs;
   });
 
   const total = scopedOrders.length || 1;
@@ -730,7 +760,10 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
 
   const moderators = db.users.filter(u => u.role === 'moderator' || u.role === 'super_admin');
   const moderatorPerformance = moderators.map(mod => {
-    const modLogs = db.activityLogs.filter(l => l.user_id === mod.id);
+    const modLogs = db.activityLogs.filter(l => {
+      const logTime = new Date(l.timestamp).getTime();
+      return l.user_id === mod.id && logTime >= startMs && logTime <= endMs;
+    });
     const confirmations = modLogs.filter(l => l.action_type === 'status_change' && l.description.includes('APPROVED')).length;
     const edits = modLogs.filter(l => l.action_type === 'order_edit').length;
     const cancellations = modLogs.filter(l => l.action_type === 'cancelled').length;
