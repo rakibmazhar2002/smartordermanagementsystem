@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Order, OrderItem } from '../../types/index.ts';
-import { X, Save, Edit3, Plus, Trash2 } from 'lucide-react';
+import { X, Save, Edit3, Plus, Trash2, Lock } from 'lucide-react';
 
 interface EditOrderModalProps {
   order: Order;
@@ -25,7 +25,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
   onSave,
 }) => {
   const [customerName, setCustomerName] = useState(order.customer_name);
-  const [phone] = useState(order.phone); // ফোন নম্বর স্টেট সুরক্ষিত রাখা হলো (এডিট বন্ধ)
+  const [phone] = useState(order.phone); // ফোন নম্বর সুরক্ষিত রাখা হলো
   const [address, setAddress] = useState(order.address);
   const [shippingFee, setShippingFee] = useState<number>(order.shipping_fee);
   const [items, setItems] = useState<OrderItem[]>(
@@ -36,10 +36,9 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleItemChange = (index: number, field: 'name' | 'quantity' | 'price', value: any) => {
+  const handleItemChange = (index: number, field: 'quantity' | 'price', value: any) => {
     const updated = [...items];
     const item = { ...updated[index] };
-    if (field === 'name') item.name = value;
     if (field === 'quantity') item.quantity = Math.max(1, parseInt(value, 10) || 1);
     if (field === 'price') item.price = Math.max(0, parseFloat(value) || 0);
     item.total = item.quantity * item.price;
@@ -80,7 +79,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
     try {
       await onSave(order.id, {
         customer_name: customerName.trim(),
-        phone: phone || order.phone, // আসল ফোন নম্বর ব্যাকএন্ডে অপরিবর্তিত থাকবে
+        phone: phone || order.phone,
         address: address.trim(),
         shipping_fee: Number(shippingFee),
         items_json: items,
@@ -127,21 +126,41 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             </div>
           )}
 
-          {/* Customer Name (মোবাইল নম্বর যাতে এডিট না হয় তাই হাইড রেখে নাম পুরো জায়গায় দেওয়া হলো) */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">
-              Customer Name
-            </label>
-            <input
-              type="text"
-              value={customerName}
-              onChange={e => setCustomerName(e.target.value)}
-              required
-              className="w-full px-3 py-2 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-            />
+          {/* Customer Credentials (নাম এডিটেবল, মোবাইল আন-এডিটেবল) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Customer Name
+              </label>
+              <input
+                type="text"
+                value={customerName}
+                onChange={e => setCustomerName(e.target.value)}
+                required
+                className="w-full px-3 py-2 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Customer Phone
+                </label>
+                <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5" /> Read-only
+                </span>
+              </div>
+              <input
+                type="text"
+                value={phone}
+                readOnly
+                title="Mobile number cannot be edited"
+                className="w-full px-3 py-2 text-sm bg-slate-950/60 border border-slate-800/80 rounded-lg text-slate-400 font-mono cursor-not-allowed select-all focus:outline-none"
+              />
+            </div>
           </div>
 
-          {/* Delivery Address */}
+          {/* Full Street Address */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">
               Full Street Address
@@ -155,7 +174,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             />
           </div>
 
-          {/* Line items editor (প্রোডাক্টের ফুল নেম যাতে না কাটে) */}
+          {/* Order Items & Quantities */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-semibold text-slate-300">
@@ -175,18 +194,16 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
               {items.map((item, idx) => (
                 <div
                   key={idx}
-                  className="flex flex-col sm:flex-row sm:items-center gap-2.5 p-3 rounded-lg bg-slate-950 border border-slate-800/80"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg bg-slate-950 border border-slate-800/80"
                 >
-                  {/* Product Full Name Field */}
-                  <div className="grow min-w-0">
-                    <input
-                      type="text"
+                  {/* Product Full Name (Uneditable, Wraps nicely up to 2 lines) */}
+                  <div className="grow min-w-0 pr-1">
+                    <p
+                      className="text-xs font-medium text-slate-200 leading-snug line-clamp-2 break-words select-text"
                       title={item.name}
-                      value={item.name}
-                      onChange={e => handleItemChange(idx, 'name', e.target.value)}
-                      placeholder="Product Full Name"
-                      className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
-                    />
+                    >
+                      {item.name}
+                    </p>
                   </div>
 
                   {/* Quantity, Price, Line Total & Action */}
@@ -199,7 +216,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                         onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
                         placeholder="Qty"
                         title="Quantity"
-                        className="w-full px-2 py-2 text-xs bg-slate-900 border border-slate-800 rounded text-center text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-2 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded text-center text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
 
@@ -211,7 +228,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                         onChange={e => handleItemChange(idx, 'price', e.target.value)}
                         placeholder="Price"
                         title="Price per unit"
-                        className="w-full px-2 py-2 text-xs bg-slate-900 border border-slate-800 rounded text-right text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-2 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded text-right text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
 
@@ -243,9 +260,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             </div>
 
             <div className="flex items-center justify-between text-xs text-slate-400">
-              <span className="flex items-center gap-2">
-                <span>Shipping Fee:</span>
-              </span>
+              <span>Shipping Fee:</span>
               <div className="flex items-center gap-1.5">
                 <input
                   type="number"
@@ -264,7 +279,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             </div>
           </div>
 
-          {/* Footer buttons (শুধুমাত্র Save বাটন রাখা হয়েছে) */}
+          {/* Footer buttons (Save) */}
           <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3 shrink-0">
             <button
               type="button"
