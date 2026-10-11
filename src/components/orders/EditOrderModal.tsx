@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Order, OrderItem } from '../../types/index.ts';
-import { X, Save, Edit3, Plus, Trash2, Lock, Tag } from 'lucide-react';
+import { X, Save, Edit3, Plus, Trash2, Lock, Tag, BadgePercent } from 'lucide-react';
 
 interface EditOrderModalProps {
   order: Order;
@@ -13,6 +13,9 @@ interface EditOrderModalProps {
       phone: string;
       address: string;
       shipping_fee: number;
+      discount?: number;
+      discount_amount?: number;
+      total_amount?: number;
       items_json: OrderItem[];
     }
   ) => Promise<void>;
@@ -24,28 +27,64 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
   onClose,
   onSave,
 }) => {
-  const [customerName, setCustomerName] = useState(order.customer_name);
-  const [phone] = useState(order.phone);
-  const [address, setAddress] = useState(order.address);
-  const [shippingFee, setShippingFee] = useState<number>(order.shipping_fee);
-  const [items, setItems] = useState<OrderItem[]>(
-    JSON.parse(JSON.stringify(order.items_json || []))
+  const [customerName, setCustomerName] = useState(order.customer_name || '');
+  const [phone] = useState(order.phone || ''); // ফোন নম্বর লকড
+  const [address, setAddress] = useState(order.address || '');
+  const [shippingFee, setShippingFee] = useState<number>(Number(order.shipping_fee) || 0);
+  
+  // ডিসকাউন্ট স্টেট (আগের ডিসকাউন্ট থাকলে তা নিয়ে আসবে)
+  const [discount, setDiscount] = useState<number>(
+    Number((order as any).discount_amount ?? (order as any).discount ?? 0)
   );
+
+  // প্রোডাক্ট ও সাইজ স্টেট ইনিশিয়ালাইজেশন
+  const [items, setItems] = useState<OrderItem[]>(() => {
+    const rawItems = order.items_json ? JSON.parse(JSON.stringify(order.items_json)) : [];
+    return rawItems.map((item: any) => {
+      let initialVariation = item.variation || item.size || '';
+      // প্রোডাক্টের নামের শেষে (M) বা (L) থাকলে তা সাইজ হিসেবে পিক করবে
+      if (!initialVariation && item.name) {
+        const match = item.name.match(/\(([^)]+)\)\$/);
+        if (match) {
+          initialVariation = match[1].trim();
+        }
+      }
+      const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+      const prc = Math.max(0, parseFloat(item.price) || 0);
+      return {
+        ...item,
+        variation: initialVariation,
+        quantity: qty,
+        price: prc,
+        total: qty * prc,
+      };
+    });
+  });
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const handleItemChange = (index: number, field: keyof OrderItem, value: any) => {
+  // প্রোডাক্ট ফিল্ড হ্যান্ডলার (নাম, সাইজ, রেট, কোয়ান্টিটি)
+  const handleItemChange = (index: number, field: string, value: any) => {
     const updated = [...items];
     const item = { ...updated[index] };
 
     if (field === 'quantity') {
       item.quantity = Math.max(1, parseInt(value, 10) || 1);
-      item.total = item.quantity * (item.price || 0);
+      item.total = item.quantity * (Number(item.price) || 0);
     } else if (field === 'price') {
       item.price = Math.max(0, parseFloat(value) || 0);
-      item.total = (item.quantity || 1) * item.price;
+      item.total = (Number(item.quantity) || 1) * item.price;
+    } else if (field === 'variation') {
+      item.variation = value;
+      // নামের শেষে যদি আগের সাইজ থাকে তা স্বয়ংক্রিয়ভাবে নতুন সাইজ দিয়ে রিপ্লেস হবে
+      if (item.name && /\([^)]+\)\$/.test(item.name.trim())) {
+        item.name = item.name.trim().replace(/\([^)]+\)\$/, `(${value})`);
+      }
+    } else if (field === 'name') {
+      item.name = value;
     } else {
       (item as any)[field] = value;
     }
@@ -54,6 +93,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
     setItems(updated);
   };
 
+  // নতুন আইটেম যোগ করা
   const handleAddItem = () => {
     setItems([
       ...items,
@@ -73,8 +113,9 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
     setItems(items.filter((_, i) => i !== index));
   };
 
+  // ক্যালকুলেশন: সাবটোটাল + শিপিং - ডিসকাউন্ট
   const subtotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
-  const grandTotal = subtotal + Number(shippingFee);
+  const grandTotal = Math.max(0, subtotal + Number(shippingFee) - Number(discount));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,7 +131,10 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
         customer_name: customerName.trim(),
         phone: phone || order.phone,
         address: address.trim(),
-        shipping_fee: Number(shippingFee),
+        shipping_fee: Number(shippingFee) || 0,
+        discount: Number(discount) || 0,
+        discount_amount: Number(discount) || 0,
+        total_amount: grandTotal,
         items_json: items,
       });
       onClose();
@@ -115,7 +159,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                 Edit Order #{order.id}
               </h2>
               <p className="text-xs text-slate-400">
-                Local Custom Edit (Won't affect WooCommerce store)
+                Local Custom Edit (No WooCommerce Sync)
               </p>
             </div>
           </div>
@@ -183,7 +227,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             />
           </div>
 
-          {/* Order Items & Quantities */}
+          {/* Order Items & Sizes */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-semibold text-slate-300">
@@ -210,7 +254,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                     <input
                       type="text"
                       required
-                      placeholder="Product Name (যেমন: HP-919 Denim Baggy Trousers)"
+                      placeholder="Product Name (e.g. Denim Baggy Trousers)"
                       value={item.name}
                       onChange={e => handleItemChange(idx, 'name', e.target.value)}
                       className="grow px-3 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -228,9 +272,10 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                     )}
                   </div>
 
-                  {/* Size / Variation Field with 4XL Preset & Datalist */}
+                  {/* Size Dropdown, Quantity, Price & Total */}
                   <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-xs">
-                    <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 grow sm:grow-0 sm:w-48">
+                    {/* Size Selector with 4XL Preset */}
+                    <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 grow sm:grow-0 sm:w-44">
                       <Tag className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                       <input
                         list={`size-options-${idx}`}
@@ -292,13 +337,14 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             </div>
           </div>
 
-          {/* Pricing summary */}
-          <div className="p-3.5 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
+          {/* Pricing Calculation Summary */}
+          <div className="p-3.5 rounded-lg bg-slate-950 border border-slate-800 space-y-2.5">
             <div className="flex items-center justify-between text-xs text-slate-400">
               <span>Items Subtotal:</span>
               <span className="font-mono tabular-nums text-slate-200">{subtotal.toLocaleString()} ৳</span>
             </div>
 
+            {/* Editable Shipping Fee */}
             <div className="flex items-center justify-between text-xs text-slate-400">
               <span>Shipping Fee:</span>
               <div className="flex items-center gap-1.5">
@@ -307,19 +353,38 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                   min={0}
                   value={shippingFee}
                   onChange={e => setShippingFee(parseFloat(e.target.value) || 0)}
-                  className="w-20 px-2 py-0.5 text-xs bg-slate-900 border border-slate-800 rounded text-right text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="w-24 px-2 py-0.5 text-xs bg-slate-900 border border-slate-800 rounded text-right text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
                 <span className="text-slate-500 text-xs">৳</span>
               </div>
             </div>
 
+            {/* Editable Discount Field */}
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span className="flex items-center gap-1 text-rose-400 font-medium">
+                <BadgePercent className="w-3.5 h-3.5" /> Discount:
+              </span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={0}
+                  value={discount}
+                  onChange={e => setDiscount(Math.max(0, parseFloat(e.target.value) || 0))}
+                  placeholder="0"
+                  className="w-24 px-2 py-0.5 text-xs bg-slate-900 border border-slate-800 rounded text-right text-rose-300 font-mono focus:outline-none focus:ring-1 focus:ring-rose-500"
+                />
+                <span className="text-slate-500 text-xs">৳</span>
+              </div>
+            </div>
+
+            {/* Grand Total */}
             <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-sm font-semibold">
               <span className="text-white">Calculated Order Total:</span>
               <span className="font-mono tabular-nums text-emerald-400 text-base">{grandTotal.toLocaleString()} ৳</span>
             </div>
           </div>
 
-          {/* Footer buttons (Save) */}
+          {/* Footer buttons */}
           <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3 shrink-0">
             <button
               type="button"
