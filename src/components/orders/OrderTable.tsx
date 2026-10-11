@@ -101,6 +101,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
 
   const [activeStatus, setActiveStatus] = useState<string>('pending');
   const [searchQuery, setSearchQuery] = useState('');
+  const [pageSize, setPageSize] = useState<number>(50); // ডিফল্ট ৫০ টি অর্ডার ফিল্টার
   const [isLoading, setIsLoading] = useState(true);
   const [cancelReasons, setCancelReasons] = useState<CancelReason[]>([]);
 
@@ -193,7 +194,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     const targetOrder = orders.find(o => o.id === orderId);
     if (!targetOrder) return;
 
-    // ক্যানসেল করতে হলে অবশ্যই পপআপ ওপেন করতে হবে, ড্রপডাউন থেকে সরাসরি হবে না
     if (nextStatus === 'cancelled') {
       setCancellingOrder(targetOrder);
       return;
@@ -224,7 +224,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     }
   };
 
-  // ক্যানসেল কনফার্মেশন: বাধ্যতামূলক কারণ ও কাস্টম কারণ ব্যাকএন্ডে সিংক
   const handleConfirmCancel = async (orderId: number, reasonId: string, customReason?: string) => {
     if (!reasonId) {
       setNotification({ type: 'error', message: 'ক্যানসেল করার কারণ নির্বাচন করা বাধ্যতামূলক।' });
@@ -273,7 +272,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     }
   };
 
-  // ইন্টারনাল কমেন্ট সেভ করার সাবমিট হ্যান্ডলার
   const handleSaveComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!commentingOrder || !commentText.trim()) return;
@@ -345,6 +343,9 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     }
   };
 
+  // স্লাইস করা প্রদর্শিত অর্ডারসমূহ
+  const displayedOrders = orders.slice(0, pageSize);
+
   const handleBulkStatus = async (status: OrderStatus) => {
     if (selectedOrderIds.length === 0) return;
     try {
@@ -358,8 +359,8 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   };
 
   const toggleSelectAll = () => {
-    if (selectedOrderIds.length === orders.length) setSelectedOrderIds([]);
-    else setSelectedOrderIds(orders.map(o => o.id));
+    if (selectedOrderIds.length === displayedOrders.length) setSelectedOrderIds([]);
+    else setSelectedOrderIds(displayedOrders.map(o => o.id));
   };
 
   const toggleSelectOrder = (id: number) => {
@@ -426,7 +427,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
 
       {/* Row 2: Search Bar & Actions Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/80 p-3 rounded-xl border border-slate-800 shadow-sm">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => fetchOrders(activeStatus, searchQuery)}
             title="Reload Orders"
@@ -444,8 +445,24 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
             <span>Pull Order</span>
           </button>
 
+          {/* নতুন: ৫০, ১০০, ২০০, ৩০০, ৫০০ ফিল্টার ড্রপডাউন */}
+          <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs">
+            <span className="text-slate-400 font-medium text-[11px]">Show:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="bg-transparent text-white font-mono font-semibold focus:outline-none cursor-pointer text-xs"
+            >
+              <option value={50} className="bg-slate-900 text-white">50</option>
+              <option value={100} className="bg-slate-900 text-white">100</option>
+              <option value={200} className="bg-slate-900 text-white">200</option>
+              <option value={300} className="bg-slate-900 text-white">300</option>
+              <option value={500} className="bg-slate-900 text-white">500</option>
+            </select>
+          </div>
+
           <span className="text-xs text-slate-400 font-medium hidden sm:inline ml-1">
-            Showing <strong className="text-white font-mono">{orders.length}</strong> orders
+            Showing <strong className="text-white font-mono">{displayedOrders.length}</strong> of <strong className="text-slate-300 font-mono">{orders.length}</strong> orders
           </span>
         </div>
 
@@ -496,7 +513,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                 <th className="py-3 px-3 w-10 text-center">
                   <input
                     type="checkbox"
-                    checked={orders.length > 0 && selectedOrderIds.length === orders.length}
+                    checked={displayedOrders.length > 0 && selectedOrderIds.length === displayedOrders.length}
                     onChange={toggleSelectAll}
                     className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 cursor-pointer"
                   />
@@ -520,7 +537,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                     </div>
                   </td>
                 </tr>
-              ) : orders.length === 0 ? (
+              ) : displayedOrders.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-12 text-center text-slate-500">
                     <Package className="w-8 h-8 text-slate-600 mx-auto mb-2" />
@@ -528,7 +545,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   </td>
                 </tr>
               ) : (
-                orders.map((order, index) => {
+                displayedOrders.map((order, index) => {
                   const isSelected = selectedOrderIds.includes(order.id);
                   const nameKey = `name_${order.id}`;
                   const phoneKey = `phone_${order.id}`;
@@ -537,7 +554,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
 
                   const cfg = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending;
                   const isDropdownOpen = openDropdownOrderId === order.id;
-                  const isNearBottom = index >= orders.length - 2 && orders.length > 3;
+                  const isNearBottom = index >= displayedOrders.length - 2 && displayedOrders.length > 3;
 
                   // Completed বা Cancelled হলে ফাইনাল লক
                   const isStatusLocked = order.status === 'completed' || order.status === 'cancelled';
