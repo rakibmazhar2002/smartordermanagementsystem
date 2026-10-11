@@ -477,7 +477,7 @@ app.post('/api/users', authenticate, requireSuperAdmin, async (req: Request, res
   }
 });
 
-// ইউজার আপডেট এবং পাসওয়ার্ড রিসেট এন্ডপয়েন্ট
+// ইউজার আপডেট এবং পাসওয়ার্ড রিসেট এন্ডপয়েন্ট
 app.put('/api/users/:id', authenticate, requireSuperAdmin, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -716,6 +716,7 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
   });
 });
 
+// অর্ডার এডিট এন্ডপয়েন্ট (ডিসকাউন্ট, সাইজ ও কাস্টম প্রোডাক্ট লোকাল ম্যানেজমেন্ট)
 app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => {
   const rawId = parseInt(req.params.id, 10);
   if (isNaN(rawId)) {
@@ -723,7 +724,7 @@ app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => 
   }
 
   const user = (req as any).user as AuthUser;
-  const { customer_name, phone, address, shipping_fee, items_json } = req.body;
+  const { customer_name, phone, address, shipping_fee, discount, discount_amount, total_amount, items_json } = req.body;
 
   const db = getDb();
   const order = db.orders.find(o => o.id === rawId);
@@ -753,13 +754,29 @@ app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => 
     order.shipping_fee = Number(shipping_fee);
   }
 
+  // ডিসকাউন্ট সেভ হ্যান্ডলার
+  const newDiscount = Number(discount_amount ?? discount ?? (order as any).discount ?? 0);
+  if (newDiscount !== Number((order as any).discount || 0)) {
+    diffs.push(`Discount adjusted to ${newDiscount} BDT`);
+    (order as any).discount = newDiscount;
+    (order as any).discount_amount = newDiscount;
+  }
+
   if (items_json && Array.isArray(items_json)) {
     diffs.push('Order item line quantities/details modified');
     order.items_json = items_json;
   }
 
+  // ডিসকাউন্টসহ সঠিক টোটাল ক্যালকুলেশন
   const itemsTotal = order.items_json.reduce((sum, item) => sum + (Number(item.price) * Number(item.quantity)), 0);
-  order.total_amount = itemsTotal + order.shipping_fee;
+  const finalDiscount = Number((order as any).discount || (order as any).discount_amount || 0);
+
+  if (total_amount !== undefined && !isNaN(Number(total_amount))) {
+    order.total_amount = Number(total_amount);
+  } else {
+    order.total_amount = Math.max(0, itemsTotal + Number(order.shipping_fee) - finalDiscount);
+  }
+
   order.updated_by_id = user.id;
   order.updatedAt = new Date().toISOString();
 
@@ -776,20 +793,13 @@ app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => 
     });
   }
 
+  // লোকাল ডাটাবেজে স্থায়ীভাবে সেভ করা
   safeSaveDb();
 
-  const syncResult = await syncOrderToWooCommerce(rawId, {
-    customer_name: order.customer_name,
-    phone: order.phone,
-    address: order.address,
-    shipping_fee: order.shipping_fee,
-    items_json: order.items_json,
-  });
-
+  // লোকাল পরিবর্তন: উকমার্সে কোনো রিকোয়েস্ট পাঠানো হবে না, ডাটা শুধু SOMS-এ থাকবে
   return res.json({
     success: true,
     order,
-    syncResult,
     diffs,
   });
 });
@@ -894,7 +904,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const startMs = startTime.getTime();
   const endMs = endTime.getTime();
 
-  // ১। META CAPI DISPATCHED: শুধুমাত্র Order Created Date (createdAt) অনুযায়ী গণনা
+  // ১। META CAPI DISPATCHED: শুধুমাত্র Order Created Date (createdAt) অনুযায়ী গণনা
   const createdOrders = db.orders.filter(o => {
     const t = new Date(o.createdAt).getTime();
     return !isNaN(t) && t >= startMs && t <= endMs;
@@ -903,7 +913,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     o => o.status === 'approved' || o.status === 'completed'
   ).length;
 
-  // ২। বাকি সব মেট্রিক্স: Action / Modified Date (updatedAt) অনুযায়ী গণনা
+  // ২। বাকি সব মেট্রিক্স: Action / Modified Date (updatedAt) অনুযায়ী গণনা
   const modifiedOrders = db.orders.filter(o => {
     const actionTime = new Date(o.updatedAt || o.createdAt).getTime();
     return !isNaN(actionTime) && actionTime >= startMs && actionTime <= endMs;
