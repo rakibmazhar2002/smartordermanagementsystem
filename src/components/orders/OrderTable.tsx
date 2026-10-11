@@ -71,16 +71,14 @@ const STATUS_CONFIG: Record<
   },
 };
 
-// আপনার নির্ধারিত কঠোর স্ট্যাটাস রুলস
 const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  pending: ['approved', 'hold', 'cancelled'], // পেন্ডিং থেকে এপ্রুভ, হোল্ড ও ক্যানসেল
-  approved: ['completed'],                    // এপ্রুভ থেকে শুধুমাত্র কমপ্লিট
-  hold: ['approved', 'cancelled'],            // হোল্ড থেকে শুধুমাত্র এপ্রুভ ও ক্যানসেল
-  completed: [],                              // কমপ্লিট হলে লকড
-  cancelled: [],                              // ক্যানসেল হলে লকড
+  pending: ['approved', 'hold', 'cancelled'],
+  approved: ['completed'],
+  hold: ['approved', 'cancelled'],
+  completed: [],
+  cancelled: [],
 };
 
-// দ্রুত কমেন্ট দেওয়ার প্রিসেট চিপস
 const QUICK_COMMENT_PRESETS = [
   '📞 ১ম বার কল - রিসিভ করেনি',
   '📞 ২য় বার কল - রিং হয়ে কেটে গেছে',
@@ -103,15 +101,14 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
 
   const [activeStatus, setActiveStatus] = useState<string>('pending');
   const [searchQuery, setSearchQuery] = useState('');
-  const [pageSize, setPageSize] = useState<number>(50); // ডিফল্ট ৫০ টি অর্ডার ফিল্টার
-  const [currentPage, setCurrentPage] = useState<number>(1); // পেজিনেশন পেজ স্টেট
+  const [pageSize, setPageSize] = useState<number>(50);
+  const [currentPage, setCurrentPage] = useState<number>(1);
   const [isLoading, setIsLoading] = useState(true);
   const [cancelReasons, setCancelReasons] = useState<CancelReason[]>([]);
 
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
   const [openDropdownOrderId, setOpenDropdownOrderId] = useState<number | null>(null);
 
-  // Pull Order Modal States
   const [isPullModalOpen, setIsPullModalOpen] = useState(false);
   const [pullMode, setPullMode] = useState<'id' | 'last24' | 'custom'>('id');
   const [pullOrderIdInput, setPullOrderIdInput] = useState('');
@@ -119,12 +116,10 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   const [pullEndDate, setPullEndDate] = useState('');
   const [isPulling, setIsPulling] = useState(false);
 
-  // Modals state
   const [cancellingOrder, setCancellingOrder] = useState<Order | null>(null);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [auditingOrder, setAuditingOrder] = useState<Order | null>(null);
 
-  // Internal Comment Modal States
   const [commentingOrder, setCommentingOrder] = useState<Order | null>(null);
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
@@ -181,7 +176,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setSearchQuery(val);
-    setCurrentPage(1); // সার্চ করলে পেজ ১-এ আসবে
+    setCurrentPage(1);
     fetchOrders(activeStatus, val);
   };
 
@@ -347,13 +342,11 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     }
   };
 
-  // পেজিনেশন ক্যালকুলেশন
   const totalPages = Math.ceil(orders.length / pageSize) || 1;
   const startIndex = (currentPage - 1) * pageSize;
   const endIndex = startIndex + pageSize;
   const displayedOrders = orders.slice(startIndex, endIndex);
 
-  // পেজ নম্বরগুলোর লিস্ট তৈরি (স্মার্ট উইন্ডোয়িং)
   const getPageNumbers = () => {
     const pages: (number | string)[] = [];
     if (totalPages <= 7) {
@@ -367,7 +360,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         pages.push(1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages);
       }
     }
-  }
     return pages;
   };
 
@@ -427,7 +419,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
               key={tab.key}
               onClick={() => {
                 setActiveStatus(tab.key);
-                setCurrentPage(1); // ট্যাব পরিবর্তন করলে পেজ ১-এ যাবে
+                setCurrentPage(1);
                 fetchOrders(tab.key, searchQuery);
               }}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-all border shadow-xs ${
@@ -471,14 +463,13 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
             <span>Pull Order</span>
           </button>
 
-          {/* ৫০, ১০০, ২০০, ৩০০, ৫০০ ফিল্টার ড্রপডাউন */}
           <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs">
             <span className="text-slate-400 font-medium text-[11px]">Show:</span>
             <select
               value={pageSize}
               onChange={(e) => {
                 setPageSize(Number(e.target.value));
-                setCurrentPage(1); // লিমিট পরিবর্তন করলে পেজ ১-এ যাবে
+                setCurrentPage(1);
               }}
               className="bg-transparent text-white font-mono font-semibold focus:outline-none cursor-pointer text-xs"
             >
@@ -588,7 +579,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   const isDropdownOpen = openDropdownOrderId === order.id;
                   const isNearBottom = index >= displayedOrders.length - 2 && displayedOrders.length > 3;
 
-                  // Completed বা Cancelled হলে ফাইনাল লক
                   const isStatusLocked = order.status === 'completed' || order.status === 'cancelled';
                   const availableTargets = ALLOWED_TRANSITIONS[order.status] || [];
 
@@ -639,7 +629,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                             </button>
                           </div>
                           
-                          {/* ফোন নম্বর, ১-ক্লিক কপি এবং MicroSIP সরাসরি কল বাটন */}
                           <div className="flex items-center gap-1.5">
                             <span className="font-mono text-slate-400 text-xs">{order.phone}</span>
                             
@@ -647,7 +636,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                               {copiedKeys[phoneKey] ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
 
-                            {/* MicroSIP / PC কলিং অ্যাপ ট্রিগার বাটন */}
                             <a
                               href={`tel:${cleanPhone}`}
                               title={`Direct Call via MicroSIP (${cleanPhone})`}
@@ -691,7 +679,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         </div>
                       </td>
 
-                      {/* শর্তাধীন ও লকড স্ট্যাটাস ড্রপডাউন */}
                       <td className="py-3 px-3 whitespace-nowrap relative status-dropdown-wrapper">
                         <div className="relative inline-block text-left">
                           {isStatusLocked ? (
@@ -754,7 +741,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         </div>
                       </td>
 
-                      {/* Actions: Edit, Internal Comment/Note, Audit History */}
                       <td className="py-3 px-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
                           <button
@@ -794,7 +780,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       </div>
 
-      {/* পেজিনেশন কন্ট্রোলস বার (Pagination Navigation) */}
       {totalPages > 1 && (
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-slate-900 border border-slate-800 rounded-xl shadow-md select-none">
           <div className="text-xs text-slate-400">
@@ -804,7 +789,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
           </div>
 
           <div className="flex items-center gap-1.5">
-            {/* Previous বাটন */}
             <button
               onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
               disabled={currentPage === 1}
@@ -814,7 +798,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
               <span>Previous</span>
             </button>
 
-            {/* পেজ নম্বর বাটনসমূহ */}
             <div className="flex items-center gap-1">
               {getPageNumbers().map((pNum, idx) => {
                 if (pNum === '...') {
@@ -842,7 +825,6 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
               })}
             </div>
 
-            {/* Next বাটন */}
             <button
               onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))}
               disabled={currentPage === totalPages}
@@ -855,7 +837,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       )}
 
-      {/* Internal Comments / Call Notes Modal */}
+      {/* Internal Comments Modal */}
       {commentingOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in">
           <div className="bg-[#121624] border border-slate-800 rounded-xl max-w-md w-full shadow-2xl overflow-hidden flex flex-col">
@@ -941,7 +923,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       )}
 
-      {/* Advanced Pull Order Modal */}
+      {/* Pull Order Modal */}
       {isPullModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
           <div className="bg-[#161a26] border border-slate-800 rounded-xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
