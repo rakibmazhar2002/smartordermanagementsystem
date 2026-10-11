@@ -1182,7 +1182,7 @@ app.put("/api/orders/:id", authenticate, async (req, res) => {
     return res.status(400).json({ error: "Order ID must be an integer WooCommerce ID" });
   }
   const user = req.user;
-  const { customer_name, phone, address, shipping_fee, items_json } = req.body;
+  const { customer_name, phone, address, shipping_fee, discount, discount_amount, total_amount, items_json } = req.body;
   const db = getDb();
   const order = db.orders.find((o) => o.id === rawId);
   if (!order) {
@@ -1205,12 +1205,23 @@ app.put("/api/orders/:id", authenticate, async (req, res) => {
     diffs.push(`Shipping fee adjusted from ${order.shipping_fee} BDT to ${Number(shipping_fee)} BDT`);
     order.shipping_fee = Number(shipping_fee);
   }
+  const newDiscount = Number(discount_amount ?? discount ?? order.discount ?? 0);
+  if (newDiscount !== Number(order.discount || 0)) {
+    diffs.push(`Discount adjusted to ${newDiscount} BDT`);
+    order.discount = newDiscount;
+    order.discount_amount = newDiscount;
+  }
   if (items_json && Array.isArray(items_json)) {
     diffs.push("Order item line quantities/details modified");
     order.items_json = items_json;
   }
   const itemsTotal = order.items_json.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0);
-  order.total_amount = itemsTotal + order.shipping_fee;
+  const finalDiscount = Number(order.discount || order.discount_amount || 0);
+  if (total_amount !== void 0 && !isNaN(Number(total_amount))) {
+    order.total_amount = Number(total_amount);
+  } else {
+    order.total_amount = Math.max(0, itemsTotal + Number(order.shipping_fee) - finalDiscount);
+  }
   order.updated_by_id = user.id;
   order.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   if (diffs.length > 0) {
@@ -1226,17 +1237,9 @@ app.put("/api/orders/:id", authenticate, async (req, res) => {
     });
   }
   safeSaveDb();
-  const syncResult = await syncOrderToWooCommerce(rawId, {
-    customer_name: order.customer_name,
-    phone: order.phone,
-    address: order.address,
-    shipping_fee: order.shipping_fee,
-    items_json: order.items_json
-  });
   return res.json({
     success: true,
     order,
-    syncResult,
     diffs
   });
 });
