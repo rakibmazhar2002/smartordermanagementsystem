@@ -22,6 +22,8 @@ import {
   MessageSquare,
   X,
   Send,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
 interface OrderTableProps {
@@ -102,6 +104,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   const [activeStatus, setActiveStatus] = useState<string>('pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [pageSize, setPageSize] = useState<number>(50); // ডিফল্ট ৫০ টি অর্ডার ফিল্টার
+  const [currentPage, setCurrentPage] = useState<number>(1); // পেজিনেশন পেজ স্টেট
   const [isLoading, setIsLoading] = useState(true);
   const [cancelReasons, setCancelReasons] = useState<CancelReason[]>([]);
 
@@ -178,6 +181,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setSearchQuery(val);
+    setCurrentPage(1); // সার্চ করলে পেজ ১-এ আসবে
     fetchOrders(activeStatus, val);
   };
 
@@ -343,8 +347,28 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     }
   };
 
-  // স্লাইস করা প্রদর্শিত অর্ডারসমূহ
-  const displayedOrders = orders.slice(0, pageSize);
+  // পেজিনেশন ক্যালকুলেশন
+  const totalPages = Math.ceil(orders.length / pageSize) || 1;
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const displayedOrders = orders.slice(startIndex, endIndex);
+
+  // পেজ নম্বরগুলোর লিস্ট তৈরি (স্মার্ট উইন্ডোয়িং)
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      if (currentPage <= 4) {
+        pages.push(1, 2, 3, 4, 5, '...', totalPages);
+      } else if (currentPage >= totalPages - 3) {
+        pages.push(1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+      } else {
+        pages.push(1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages);
+      }
+    }
+    return pages;
+  };
 
   const handleBulkStatus = async (status: OrderStatus) => {
     if (selectedOrderIds.length === 0) return;
@@ -402,6 +426,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
               key={tab.key}
               onClick={() => {
                 setActiveStatus(tab.key);
+                setCurrentPage(1); // ট্যাব পরিবর্তন করলে পেজ ১-এ যাবে
                 fetchOrders(tab.key, searchQuery);
               }}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-all border shadow-xs ${
@@ -445,12 +470,15 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
             <span>Pull Order</span>
           </button>
 
-          {/* নতুন: ৫০, ১০০, ২০০, ৩০০, ৫০০ ফিল্টার ড্রপডাউন */}
+          {/* ৫০, ১০০, ২০০, ৩০০, ৫০০ ফিল্টার ড্রপডাউন */}
           <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs">
             <span className="text-slate-400 font-medium text-[11px]">Show:</span>
             <select
               value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(1); // লিমিট পরিবর্তন করলে পেজ ১-এ যাবে
+              }}
               className="bg-transparent text-white font-mono font-semibold focus:outline-none cursor-pointer text-xs"
             >
               <option value={50} className="bg-slate-900 text-white">50</option>
@@ -462,7 +490,9 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
           </div>
 
           <span className="text-xs text-slate-400 font-medium hidden sm:inline ml-1">
-            Showing <strong className="text-white font-mono">{displayedOrders.length}</strong> of <strong className="text-slate-300 font-mono">{orders.length}</strong> orders
+            Showing <strong className="text-white font-mono">{orders.length > 0 ? startIndex + 1 : 0}</strong>-
+            <strong className="text-white font-mono">{Math.min(endIndex, orders.length)}</strong> of{' '}
+            <strong className="text-slate-300 font-mono">{orders.length}</strong> orders
           </span>
         </div>
 
@@ -479,6 +509,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
             <button
               onClick={() => {
                 setSearchQuery('');
+                setCurrentPage(1);
                 fetchOrders(activeStatus, '');
               }}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs"
@@ -748,6 +779,67 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
           </table>
         </div>
       </div>
+
+      {/* নতুন: পেজিনেশন কন্ট্রোলস বার (Pagination Navigation) */}
+      {totalPages > 1 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-slate-900 border border-slate-800 rounded-xl shadow-md select-none">
+          <div className="text-xs text-slate-400">
+            Showing <strong className="text-white font-mono">{startIndex + 1}</strong> to{' '}
+            <strong className="text-white font-mono">{Math.min(endIndex, orders.length)}</strong> of{' '}
+            <strong className="text-white font-mono">{orders.length}</strong> orders (Page <strong className="text-indigo-400 font-mono">{currentPage}</strong> of <strong className="text-slate-300 font-mono">{totalPages}</strong>)
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {/* Previous বাটন */}
+            <button
+              onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
+              disabled={currentPage === 1}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span>Previous</span>
+            </button>
+
+            {/* পেজ নম্বর বাটনসমূহ */}
+            <div className="flex items-center gap-1">
+              {getPageNumbers().map((pNum, idx) => {
+                if (pNum === '...') {
+                  return (
+                    <span key={`dots_${idx}`} className="px-2 py-1 text-slate-500 text-xs">
+                      ...
+                    </span>
+                  );
+                }
+
+                const isActive = currentPage === pNum;
+                return (
+                  <button
+                    key={`page_${pNum}`}
+                    onClick={() => setCurrentPage(Number(pNum))}
+                    className={`w-8 h-7 flex items-center justify-center rounded-lg text-xs font-mono font-semibold transition ${
+                      isActive
+                        ? 'bg-teal-600 text-white shadow-sm shadow-teal-900/50'
+                        : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-white'
+                    }`}
+                  >
+                    {pNum}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Next বাটন */}
+            <button
+              onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
+            >
+              <span>Next</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Internal Comments / Call Notes Modal */}
       {commentingOrder && (
