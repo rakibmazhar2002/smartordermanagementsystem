@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Order, OrderItem } from '../../types/index.ts';
-import { X, Save, Edit3, Plus, Trash2, Lock } from 'lucide-react';
+import { X, Save, Edit3, Plus, Trash2, Lock, Tag } from 'lucide-react';
 
 interface EditOrderModalProps {
   order: Order;
@@ -25,7 +25,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
   onSave,
 }) => {
   const [customerName, setCustomerName] = useState(order.customer_name);
-  const [phone] = useState(order.phone); // ফোন নম্বর সুরক্ষিত রাখা হলো
+  const [phone] = useState(order.phone);
   const [address, setAddress] = useState(order.address);
   const [shippingFee, setShippingFee] = useState<number>(order.shipping_fee);
   const [items, setItems] = useState<OrderItem[]>(
@@ -36,12 +36,20 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleItemChange = (index: number, field: 'quantity' | 'price', value: any) => {
+  const handleItemChange = (index: number, field: keyof OrderItem, value: any) => {
     const updated = [...items];
     const item = { ...updated[index] };
-    if (field === 'quantity') item.quantity = Math.max(1, parseInt(value, 10) || 1);
-    if (field === 'price') item.price = Math.max(0, parseFloat(value) || 0);
-    item.total = item.quantity * item.price;
+
+    if (field === 'quantity') {
+      item.quantity = Math.max(1, parseInt(value, 10) || 1);
+      item.total = item.quantity * (item.price || 0);
+    } else if (field === 'price') {
+      item.price = Math.max(0, parseFloat(value) || 0);
+      item.total = (item.quantity || 1) * item.price;
+    } else {
+      (item as any)[field] = value;
+    }
+
     updated[index] = item;
     setItems(updated);
   };
@@ -51,10 +59,11 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
       ...items,
       {
         product_id: Math.floor(Math.random() * 8000) + 1000,
-        name: 'Additional Product Item',
+        name: '',
+        variation: 'M',
         quantity: 1,
-        price: 500,
-        total: 500,
+        price: 0,
+        total: 0,
       },
     ]);
   };
@@ -64,7 +73,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
     setItems(items.filter((_, i) => i !== index));
   };
 
-  const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+  const subtotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
   const grandTotal = subtotal + Number(shippingFee);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -103,10 +112,10 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-semibold text-white">
-                Edit WooCommerce Order #{order.id}
+                Edit Order #{order.id}
               </h2>
               <p className="text-xs text-slate-400">
-                2-Way Outbound Synchronization with WooCommerce REST API
+                Local Custom Edit (Won't affect WooCommerce store)
               </p>
             </div>
           </div>
@@ -126,7 +135,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
             </div>
           )}
 
-          {/* Customer Credentials (নাম এডিটেবল, মোবাইল আন-এডিটেবল) */}
+          {/* Customer Credentials */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
@@ -178,7 +187,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-semibold text-slate-300">
-                Order Items & Quantities
+                Order Items & Sizes
               </label>
               <button
                 type="button"
@@ -190,25 +199,65 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
               </button>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               {items.map((item, idx) => (
                 <div
                   key={idx}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg bg-slate-950 border border-slate-800/80"
+                  className="p-3 rounded-xl bg-slate-950 border border-slate-800/90 space-y-2.5"
                 >
-                  {/* Product Full Name (Uneditable, Wraps nicely up to 2 lines) */}
-                  <div className="grow min-w-0 pr-1">
-                    <p
-                      className="text-xs font-medium text-slate-200 leading-snug line-clamp-2 break-words select-text"
-                      title={item.name}
-                    >
-                      {item.name}
-                    </p>
+                  {/* Product Name & Delete */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Product Name (যেমন: HP-919 Denim Baggy Trousers)"
+                      value={item.name}
+                      onChange={e => handleItemChange(idx, 'name', e.target.value)}
+                      className="grow px-3 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+
+                    {items.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveItem(idx)}
+                        className="p-1.5 text-slate-500 hover:text-red-400 rounded-lg hover:bg-slate-900 transition shrink-0"
+                        title="Remove Item"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
 
-                  {/* Quantity, Price, Line Total & Action */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="w-16">
+                  {/* Size / Variation Field with 4XL Preset & Datalist */}
+                  <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-xs">
+                    <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 grow sm:grow-0 sm:w-48">
+                      <Tag className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <input
+                        list={`size-options-${idx}`}
+                        type="text"
+                        placeholder="Size (e.g. 4XL)"
+                        value={item.variation || ''}
+                        onChange={e => handleItemChange(idx, 'variation', e.target.value)}
+                        className="w-full bg-transparent text-amber-300 font-semibold placeholder-slate-500 focus:outline-none text-xs"
+                      />
+                      <datalist id={`size-options-${idx}`}>
+                        <option value="M" />
+                        <option value="L" />
+                        <option value="XL" />
+                        <option value="2XL" />
+                        <option value="3XL" />
+                        <option value="4XL" />
+                        <option value="28" />
+                        <option value="30" />
+                        <option value="32" />
+                        <option value="34" />
+                        <option value="36" />
+                        <option value="38" />
+                      </datalist>
+                    </div>
+
+                    {/* Quantity */}
+                    <div className="w-20">
                       <input
                         type="number"
                         min={1}
@@ -216,10 +265,11 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                         onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
                         placeholder="Qty"
                         title="Quantity"
-                        className="w-full px-2 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded text-center text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-800 rounded-lg text-center text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
 
+                    {/* Price */}
                     <div className="w-24">
                       <input
                         type="number"
@@ -228,24 +278,14 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                         onChange={e => handleItemChange(idx, 'price', e.target.value)}
                         placeholder="Price"
                         title="Price per unit"
-                        className="w-full px-2 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded text-right text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-800 rounded-lg text-right text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
 
-                    <div className="w-20 text-right text-xs font-mono font-bold text-slate-200 tabular-nums">
-                      {item.total.toLocaleString()} ৳
+                    {/* Total */}
+                    <div className="w-24 text-right font-mono font-bold text-slate-200 tabular-nums shrink-0">
+                      {(Number(item.total) || 0).toLocaleString()} ৳
                     </div>
-
-                    {items.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveItem(idx)}
-                        className="p-1.5 text-slate-500 hover:text-red-400 rounded transition shrink-0"
-                        title="Remove Item"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
                   </div>
                 </div>
               ))}
