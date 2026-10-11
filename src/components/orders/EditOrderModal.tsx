@@ -28,21 +28,18 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
   onSave,
 }) => {
   const [customerName, setCustomerName] = useState(order.customer_name || '');
-  const [phone] = useState(order.phone || ''); // ফোন নম্বর লকড
+  const [phone] = useState(order.phone || '');
   const [address, setAddress] = useState(order.address || '');
   const [shippingFee, setShippingFee] = useState<number>(Number(order.shipping_fee) || 0);
   
-  // ডিসকাউন্ট স্টেট (আগের ডিসকাউন্ট থাকলে তা নিয়ে আসবে)
   const [discount, setDiscount] = useState<number>(
     Number((order as any).discount_amount ?? (order as any).discount ?? 0)
   );
 
-  // প্রোডাক্ট ও সাইজ স্টেট ইনিশিয়ালাইজেশন
   const [items, setItems] = useState<OrderItem[]>(() => {
     const rawItems = order.items_json ? JSON.parse(JSON.stringify(order.items_json)) : [];
     return rawItems.map((item: any) => {
       let initialVariation = item.variation || item.size || '';
-      // প্রোডাক্টের নামের শেষে (M) বা (L) থাকলে তা সাইজ হিসেবে পিক করবে
       if (!initialVariation && item.name) {
         const match = item.name.match(/\(([^)]+)\)\$/);
         if (match) {
@@ -66,7 +63,6 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
 
   if (!isOpen) return null;
 
-  // প্রোডাক্ট ফিল্ড হ্যান্ডলার (নাম, সাইজ, রেট, কোয়ান্টিটি)
   const handleItemChange = (index: number, field: string, value: any) => {
     const updated = [...items];
     const item = { ...updated[index] };
@@ -79,7 +75,6 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
       item.total = (Number(item.quantity) || 1) * item.price;
     } else if (field === 'variation') {
       item.variation = value;
-      // নামের শেষে যদি আগের সাইজ থাকে তা স্বয়ংক্রিয়ভাবে নতুন সাইজ দিয়ে রিপ্লেস হবে
       if (item.name && /\([^)]+\)\$/.test(item.name.trim())) {
         item.name = item.name.trim().replace(/\([^)]+\)\$/, `(${value})`);
       }
@@ -93,7 +88,6 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
     setItems(updated);
   };
 
-  // নতুন আইটেম যোগ করা
   const handleAddItem = () => {
     setItems([
       ...items,
@@ -113,7 +107,6 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
     setItems(items.filter((_, i) => i !== index));
   };
 
-  // ক্যালকুলেশন: সাবটোটাল + শিপিং - ডিসকাউন্ট
   const subtotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
   const grandTotal = Math.max(0, subtotal + Number(shippingFee) - Number(discount));
 
@@ -272,9 +265,8 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                     )}
                   </div>
 
-                  {/* Size Dropdown, Quantity, Price & Total */}
+                  {/* Size Selector with 4XL Preset & Datalist */}
                   <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-xs">
-                    {/* Size Selector with 4XL Preset */}
                     <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 grow sm:grow-0 sm:w-44">
                       <Tag className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                       <input
