@@ -80,14 +80,14 @@ const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   cancelled: [],                              // ক্যানসেল হলে লকড
 };
 
-// দ্রুত কমেন্ট দেওয়ার প্রিসেট চিপস
+// দ্রুত কমেন্ট দেওয়ার প্রিসেট চিপস
 const QUICK_COMMENT_PRESETS = [
   '📞 ১ম বার কল - রিসিভ করেনি',
-  '📞 ২য় বার কল - রিং হয়ে কেটে গেছে',
+  '📞 ২য় বার কল - রিং হয়ে কেটে গেছে',
   '⏰ পরে কল করতে বলেছে',
-  '💬 হোয়াটসঅ্যাপে মেসেজ পাঠানো হয়েছে',
-  '🚫 নম্বর বন্ধ / সংযোগ সম্ভব নয়',
-  '📍 ডেলিভারি ঠিকানা কনফার্ম করা হয়েছে',
+  '💬 হোয়াটসঅ্যাপে মেসেজ পাঠানো হয়েছে',
+  '🚫 নম্বর বন্ধ / সংযোগ সম্ভব নয়',
+  '📍 ডেলিভারি ঠিকানা কনফার্ম করা হয়েছে',
 ];
 
 export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
@@ -207,7 +207,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     if (!allowed.includes(nextStatus)) {
       setNotification({
         type: 'error',
-        message: `${targetOrder.status.toUpperCase()} থেকে ${nextStatus.toUpperCase()} এ স্ট্যাটাস নেওয়া অনুমোদিত নয়।`,
+        message: `${targetOrder.status.toUpperCase()} থেকে ${nextStatus.toUpperCase()} এ স্ট্যাটাস নেওয়া অনুমোদিত নয়।`,
       });
       setTimeout(() => setNotification(null), 4000);
       return;
@@ -297,7 +297,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
 
       setNotification({
         type: 'success',
-        message: `Order #${commentingOrder.id}-এ ইন্টার্নাল নোট যুক্ত হয়েছে।`,
+        message: `Order #${commentingOrder.id}-এ ইন্টার্নাল নোট যুক্ত হয়েছে।`,
       });
       setTimeout(() => setNotification(null), 4000);
       setCommentingOrder(null);
@@ -318,14 +318,14 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
 
       if (pullMode === 'id') {
         if (!pullOrderIdInput.trim()) {
-          throw new Error('দয়া করে অর্ডার আইডিটি লিখুন (যেমন: 12463)।');
+          throw new Error('দয়া করে অর্ডার আইডিটি লিখুন (যেমন: 12463)।');
         }
         payload = { orderId: pullOrderIdInput.trim() };
       } else if (pullMode === 'last24') {
         payload = { hours: 24 };
       } else if (pullMode === 'custom') {
         if (!pullStartDate) {
-          throw new Error('শুরুর তারিখ ও সময় নির্বাচন করুন।');
+          throw new Error('শুরুর তারিখ ও সময় নির্বাচন করুন।');
         }
         payload = {
           startDate: new Date(pullStartDate).toISOString(),
@@ -353,7 +353,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   const endIndex = startIndex + pageSize;
   const displayedOrders = orders.slice(startIndex, endIndex);
 
-  // পেজ নম্বরগুলোর লিস্ট তৈরি (স্মার্ট উইন্ডোয়িং)
+  // পেজ নম্বরগুলোর লিস্ট তৈরি (স্মার্ট উইন্ডোয়িং)
   const getPageNumbers = () => {
     const pages: (number | string)[] = [];
     if (totalPages <= 7) {
@@ -367,6 +367,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         pages.push(1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages);
       }
     }
+  }
     return pages;
   };
 
@@ -607,12 +608,25 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         />
                       </td>
 
+                      {/* Order ID & Date + Time */}
                       <td className="py-3 px-3 whitespace-nowrap">
                         <span className="font-mono font-bold text-sm text-indigo-400 tabular-nums">
                           #{order.id}
                         </span>
-                        <div className="text-[10px] text-slate-500 font-mono tabular-nums">
-                          {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <div className="text-[10px] text-slate-500 font-mono tabular-nums mt-0.5">
+                          {order.createdAt ? (
+                            <>
+                              <span className="text-slate-400 font-medium">
+                                {new Date(order.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                              </span>
+                              <span className="text-slate-600 mx-1">·</span>
+                              <span>
+                                {new Date(order.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                              </span>
+                            </>
+                          ) : (
+                            '--'
+                          )}
                         </div>
                       </td>
 
@@ -682,7 +696,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         <div className="relative inline-block text-left">
                           {isStatusLocked ? (
                             <div
-                              title={`${order.status.toUpperCase()} স্ট্যাটাস চূড়ান্ত এবং লকড রয়েছে।`}
+                              title={`${order.status.toUpperCase()} স্ট্যাটাস চূড়ান্ত এবং লকড রয়েছে।`}
                               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-not-allowed opacity-85 select-none ${cfg.bgBtn}`}
                             >
                               <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
@@ -780,7 +794,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       </div>
 
-      {/* নতুন: পেজিনেশন কন্ট্রোলস বার (Pagination Navigation) */}
+      {/* পেজিনেশন কন্ট্রোলস বার (Pagination Navigation) */}
       {totalPages > 1 && (
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-slate-900 border border-slate-800 rounded-xl shadow-md select-none">
           <div className="text-xs text-slate-400">
@@ -894,7 +908,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   rows={3}
                   value={commentText}
                   onChange={e => setCommentText(e.target.value)}
-                  placeholder="যেমন: ৩য় বার কল করা হয়েছে, কাস্টমার বলেছে সন্ধ্যা ৭টায় ডেলিভারি কনফার্ম করবে..."
+                  placeholder="যেমন: ৩য় বার কল করা হয়েছে, কাস্টমার বলেছে সন্ধ্যা ৭টায় ডেলিভারি কনফার্ম করবে..."
                   required
                   className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-1 focus:ring-amber-500 transition resize-none placeholder-slate-500"
                 />
@@ -1002,7 +1016,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                 <div className="space-y-3">
                   <div>
                     <label className="text-xs text-slate-300 font-medium block mb-1.5">
-                      শুরুর তারিখ ও সময় (From Date & Time)
+                      শুরুর তারিখ ও সময় (From Date & Time)
                     </label>
                     <input
                       type="datetime-local"
@@ -1014,7 +1028,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   </div>
                   <div>
                     <label className="text-xs text-slate-300 font-medium block mb-1.5">
-                      শেষ তারিখ ও সময় (To Date & Time - ঐচ্ছিক)
+                      শেষ তারিখ ও সময় (To Date & Time - ঐচ্ছিক)
                     </label>
                     <input
                       type="datetime-local"
