@@ -447,7 +447,6 @@ async function syncOrderToWooCommerce(wcOrderId, updates) {
     success: true,
     message: `Synced #${wcOrderId}`,
     metaCapiTriggered: updates.status === "approved",
-    // Approved হলেই Meta CAPI Purchase হিসেবে চিহ্নিত হবে
     internalNoteAdded
   };
 }
@@ -486,12 +485,25 @@ function ingestWooCommerceOrder(payload) {
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
     }
-    existing.items_json = items;
-    existing.customer_name = customerName;
-    existing.phone = phone;
-    existing.address = address;
-    existing.total_amount = totalAmount;
-    existing.shipping_fee = shippingFee;
+    const isLocallyEdited = Boolean(
+      existing.is_locally_edited || existing.updated_by_id || Number(existing.discount || 0) > 0 || db.activityLogs && db.activityLogs.some((l) => l.order_id === wcOrderId && l.action_type === "order_edit")
+    );
+    if (!isLocallyEdited) {
+      if (!existing.address || existing.address.trim() === "" || existing.address === "Address not specified") {
+        existing.address = address;
+      }
+      if (!existing.customer_name || existing.customer_name === "Guest Customer") {
+        existing.customer_name = customerName;
+      }
+      if (!existing.phone || existing.phone.trim() === "") {
+        existing.phone = phone;
+      }
+      if (!existing.items_json || existing.items_json.length === 0) {
+        existing.items_json = items;
+        existing.total_amount = totalAmount;
+        existing.shipping_fee = shippingFee;
+      }
+    }
     existing.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     existing.wc_sync_status = "synced";
     existing.wc_last_synced_at = (/* @__PURE__ */ new Date()).toISOString();

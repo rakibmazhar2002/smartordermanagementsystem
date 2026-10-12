@@ -213,7 +213,7 @@ export async function syncOrderToWooCommerce(
   return {
     success: true,
     message: `Synced #${wcOrderId}`,
-    metaCapiTriggered: updates.status === 'approved', // Approved হলেই Meta CAPI Purchase হিসেবে চিহ্নিত হবে
+    metaCapiTriggered: updates.status === 'approved',
     internalNoteAdded
   };
 }
@@ -246,7 +246,7 @@ export function ingestWooCommerceOrder(payload: any): Order {
   const shippingFee = Number(payload.shipping_total) || 80;
   const totalAmount = Number(payload.total) || items.reduce((acc, i) => acc + i.total, 0) + shippingFee;
 
-  // যদি অর্ডার আগে থেকেই SOMS-এ থাকে (Order Updated ঘটনায়)
+  // যদি অর্ডার আগে থেকেই SOMS-এ থাকে (Order Updated ঘটনায়)
   if (existing) {
     const oldStatus = existing.status;
     const newStatus = mapWcStatusToSomsStatus(payload.status, existing.status);
@@ -264,12 +264,35 @@ export function ingestWooCommerceOrder(payload: any): Order {
       });
     }
 
-    existing.items_json = items;
-    existing.customer_name = customerName;
-    existing.phone = phone;
-    existing.address = address;
-    existing.total_amount = totalAmount;
-    existing.shipping_fee = shippingFee;
+    // লোকাল ওভাররাইট প্রোটেকশন গার্ড:
+    // SOMS-এ কোনো অর্ডার একবার সেভ বা এডিট করা হলে তার ঠিকানা, নাম, ফোন, আইটেম ও ডিসকাউন্ট
+    // উকমার্সের পুরোনো ডেটা দিয়ে কখনোই ওভাররাইট হবে না।
+    const isLocallyEdited = Boolean(
+      (existing as any).is_locally_edited ||
+      existing.updated_by_id ||
+      Number((existing as any).discount || 0) > 0 ||
+      (db.activityLogs && db.activityLogs.some(l => l.order_id === wcOrderId && l.action_type === 'order_edit'))
+    );
+
+    // যদি অর্ডারটি এডিট করা থাকে, তাহলে কোনো ফিল্ড ওভাররাইট হবে না
+    // আর যদি আন-এডিটেডও থাকে, তাহলেও বিদ্যমান ভ্যালিড ঠিকানা বা ডেটা মোছা যাবে না
+    if (!isLocallyEdited) {
+      if (!existing.address || existing.address.trim() === '' || existing.address === 'Address not specified') {
+        existing.address = address;
+      }
+      if (!existing.customer_name || existing.customer_name === 'Guest Customer') {
+        existing.customer_name = customerName;
+      }
+      if (!existing.phone || existing.phone.trim() === '') {
+        existing.phone = phone;
+      }
+      if (!existing.items_json || existing.items_json.length === 0) {
+        existing.items_json = items;
+        existing.total_amount = totalAmount;
+        existing.shipping_fee = shippingFee;
+      }
+    }
+
     existing.updatedAt = new Date().toISOString();
     existing.wc_sync_status = 'synced';
     existing.wc_last_synced_at = new Date().toISOString();
@@ -277,7 +300,7 @@ export function ingestWooCommerceOrder(payload: any): Order {
     return existing;
   }
 
-  // নতুন অর্ডারের ক্ষেত্রে ইনিশিয়াল স্ট্যাটাস ম্যাপিং
+  // নতুন অর্ডারের ক্ষেত্রে ইনিশিয়াল স্ট্যাটাস ম্যাপিং
   const initialStatus = mapWcStatusToSomsStatus(payload.status, 'pending');
 
   const newOrder: Order = {
