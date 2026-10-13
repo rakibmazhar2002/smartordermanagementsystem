@@ -36,6 +36,20 @@ app.use(express.urlencoded({ extended: true }));
 // Ensure DB is initialized
 await initDb();
 
+// ফোন নম্বর নরমালাইজেশন হেল্পার (01..., +8801..., 8801... বা স্পেস যাই থাকুক ১১ ডিজিটে আনবে)
+function normalizePhone(raw: string): string {
+  if (!raw) return '';
+  let digits = raw.replace(/\D/g, '');
+  if (digits.startsWith('880')) {
+    digits = digits.slice(2);
+  } else if (digits.startsWith('88') && digits.length === 13) {
+    digits = digits.slice(2);
+  } else if (digits.length === 10 && digits.startsWith('1')) {
+    digits = '0' + digits;
+  }
+  return digits;
+}
+
 // মাস্টার পারসিস্টেন্ট ব্যাকআপ পাথ (গিট রিপোজিটরি ফোল্ডারের বাইরে সুরক্ষিত থাকবে)
 const MASTER_BACKUP_PATH = path.resolve(__dirname, '..', 'soms_master_backup.json');
 const LOCAL_BACKUP_PATH = path.resolve(__dirname, 'soms_master_backup.json');
@@ -426,7 +440,7 @@ app.delete('/api/cancel-reasons/:id', authenticate, requireSuperAdmin, (req: Req
   const db = getDb();
 
   const index = db.cancelReasons.findIndex(r => r.id === id);
-  if (index === -1) {
+  if (!index === -1) {
     return res.status(404).json({ error: 'Cancel reason not found' });
   }
 
@@ -506,7 +520,7 @@ app.put('/api/users/:id', authenticate, requireSuperAdmin, async (req: Request, 
   }
 });
 
-// ORDERS CRUD
+// ORDERS CRUD (স্বয়ংক্রিয় ডুপ্লিকেট কাউন্ট সহ)
 app.get('/api/orders', authenticate, (req: Request, res: Response) => {
   const db = getDb();
   const status = req.query.status as string | undefined;
@@ -532,11 +546,24 @@ app.get('/api/orders', authenticate, (req: Request, res: Response) => {
 
   filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+  // একই ফোন নম্বরে মোট কতগুলো অর্ডার আছে তা নিরূপণ করা
+  const phoneCounts = new Map<string, number>();
+  for (const o of db.orders) {
+    const norm = normalizePhone(o.phone);
+    if (norm) {
+      phoneCounts.set(norm, (phoneCounts.get(norm) || 0) + 1);
+    }
+  }
+
   const cancelReasonsMap = new Map(db.cancelReasons.map(r => [r.id, r]));
-  const ordersWithMeta = filtered.map(order => ({
-    ...order,
-    cancel_reason: order.cancel_reason_id ? cancelReasonsMap.get(order.cancel_reason_id) : null,
-  }));
+  const ordersWithMeta = filtered.map(order => {
+    const norm = normalizePhone(order.phone);
+    return {
+      ...order,
+      cancel_reason: order.cancel_reason_id ? cancelReasonsMap.get(order.cancel_reason_id) : null,
+      customer_order_count: norm ? (phoneCounts.get(norm) || 1) : 1,
+    };
+  });
 
   const counts = {
     all: db.orders.length,
@@ -551,6 +578,29 @@ app.get('/api/orders', authenticate, (req: Request, res: Response) => {
     orders: ordersWithMeta,
     counts,
   });
+});
+
+// কাস্টমারের ফোন নম্বর দিয়ে পূর্বের সমস্ত অর্ডার হিস্ট্রি পাওয়ার এন্ডপয়েন্ট
+app.get('/api/orders/history/by-phone', authenticate, (req: Request, res: Response) => {
+  const rawPhone = req.query.phone as string;
+  if (!rawPhone || !rawPhone.trim()) {
+    return res.status(400).json({ error: 'Phone number is required' });
+  }
+
+  const targetNorm = normalizePhone(rawPhone);
+  const db = getDb();
+
+  const history = db.orders
+    .filter(o => normalizePhone(o.phone) === targetNorm)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const cancelReasonsMap = new Map(db.cancelReasons.map(r => [r.id, r]));
+  const detailed = history.map(o => ({
+    ...o,
+    cancel_reason: o.cancel_reason_id ? cancelReasonsMap.get(o.cancel_reason_id) : null,
+  }));
+
+  return res.json({ orders: detailed, total: detailed.length });
 });
 
 app.get('/api/orders/:id', authenticate, (req: Request, res: Response) => {
@@ -659,7 +709,6 @@ app.put('/api/orders/:id/status', authenticate, async (req: Request, res: Respon
       return res.status(400).json({ error: 'A cancellation reason is strictly required to cancel an order' });
     }
 
-    // Others সিলেক্ট করলে কাস্টম রিজন সেট হবে
     if (cancel_reason_id === 'other') {
       cancelReasonText = (custom_reason && custom_reason.trim()) ? custom_reason.trim() : 'Other / Custom Reason';
       order.cancel_reason_id = 'other';
@@ -754,7 +803,6 @@ app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => 
     order.shipping_fee = Number(shipping_fee);
   }
 
-  // ডিসকাউন্ট সেভ হ্যান্ডলার
   const newDiscount = Number(discount_amount ?? discount ?? (order as any).discount ?? 0);
   if (newDiscount !== Number((order as any).discount || 0)) {
     diffs.push(`Discount adjusted to ${newDiscount} BDT`);
@@ -767,7 +815,6 @@ app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => 
     order.items_json = items_json;
   }
 
-  // ডিসকাউন্টসহ সঠিক টোটাল ক্যালকুলেশন
   const itemsTotal = order.items_json.reduce((sum, item) => sum + (Number(item.price) * Number(item.quantity)), 0);
   const finalDiscount = Number((order as any).discount || (order as any).discount_amount || 0);
 
@@ -793,10 +840,8 @@ app.put('/api/orders/:id', authenticate, async (req: Request, res: Response) => 
     });
   }
 
-  // লোকাল ডাটাবেজে স্থায়ীভাবে সেভ করা
   safeSaveDb();
 
-  // লোকাল পরিবর্তন: উকমার্সে কোনো রিকোয়েস্ট পাঠানো হবে না, ডাটা শুধু SOMS-এ থাকবে
   return res.json({
     success: true,
     order,
