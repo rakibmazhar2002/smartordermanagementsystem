@@ -24,6 +24,8 @@ import {
   Send,
   ChevronLeft,
   ChevronRight,
+  AlertTriangle,
+  UserCheck,
 } from 'lucide-react';
 
 interface OrderTableProps {
@@ -120,6 +122,11 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [auditingOrder, setAuditingOrder] = useState<Order | null>(null);
 
+  // কাস্টমার হিস্ট্রি ও ডুপ্লিকেট পপআপ স্টেট
+  const [historyCustomerOrder, setHistoryCustomerOrder] = useState<Order | null>(null);
+  const [customerHistoryList, setCustomerHistoryList] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
   const [commentingOrder, setCommentingOrder] = useState<Order | null>(null);
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
@@ -186,6 +193,29 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
     setTimeout(() => {
       setCopiedKeys(prev => ({ ...prev, [copyKey]: false }));
     }, 1500);
+  };
+
+  // কাস্টমারের পূর্বের অর্ডার হিস্ট্রি লোড করার ফাংশন
+  const handleOpenCustomerHistory = async (targetOrder: Order) => {
+    setHistoryCustomerOrder(targetOrder);
+    setIsLoadingHistory(true);
+    try {
+      const token = localStorage.getItem('soms_token') || localStorage.getItem('token') || localStorage.getItem('auth_token') || '';
+      const res = await fetch(`/api/orders/history/by-phone?phone=${encodeURIComponent(targetOrder.phone)}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setCustomerHistoryList(data.orders || []);
+      } else {
+        setCustomerHistoryList([]);
+      }
+    } catch (err) {
+      console.error('Failed to load customer order history:', err);
+      setCustomerHistoryList([]);
+    } finally {
+      setIsLoadingHistory(false);
+    }
   };
 
   const handleStatusChange = async (orderId: number, nextStatus: OrderStatus) => {
@@ -582,6 +612,10 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                   const isStatusLocked = order.status === 'completed' || order.status === 'cancelled';
                   const availableTargets = ALLOWED_TRANSITIONS[order.status] || [];
 
+                  // ডুপ্লিকেট অর্ডার কাউন্ট
+                  const orderCount = (order as any).customer_order_count || 1;
+                  const hasDuplicates = orderCount > 1;
+
                   return (
                     <tr
                       key={order.id}
@@ -620,13 +654,29 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
                         </div>
                       </td>
 
+                      {/* Customer Details & Duplicate Alert Badge */}
                       <td className="py-3 px-3">
                         <div className="space-y-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-slate-200 truncate max-w-[160px]">{order.customer_name}</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-slate-200 truncate max-w-[150px]">
+                              {order.customer_name}
+                            </span>
                             <button onClick={() => handleCopy(nameKey, order.customer_name)} className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800">
                               {copiedKeys[nameKey] ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
+
+                            {/* স্মার্ট ডুপ্লিকেট বাটন ও ব্যাজ */}
+                            {hasDuplicates && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenCustomerHistory(order)}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 transition cursor-pointer shadow-xs animate-pulse"
+                                title="এই কাস্টমারের পূর্বের অর্ডার রয়েছে! ক্লিক করে বিস্তারিত দেখুন"
+                              >
+                                <AlertTriangle className="w-3 h-3 text-amber-400" />
+                                <span>{orderCount} Orders</span>
+                              </button>
+                            )}
                           </div>
                           
                           <div className="flex items-center gap-1.5">
@@ -780,6 +830,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
         </div>
       </div>
 
+      {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-slate-900 border border-slate-800 rounded-xl shadow-md select-none">
           <div className="text-xs text-slate-400">
@@ -833,6 +884,127 @@ export const OrderTable: React.FC<OrderTableProps> = ({ onRefreshTrigger }) => {
               <span>Next</span>
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* কাস্টমার হিস্ট্রি ও ডুপ্লিকেট অর্ডার প্রিভিউ মোডাল */}
+      {historyCustomerOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-[#121624] border border-slate-800 rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/70">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>{historyCustomerOrder.customer_name}</span>
+                    <span className="text-xs font-mono text-slate-400">({historyCustomerOrder.phone})</span>
+                  </h3>
+                  <p className="text-[11px] text-amber-400/90 font-medium">
+                    এই কাস্টমারের মোট {customerHistoryList.length} টি অর্ডার পাওয়া গেছে
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setHistoryCustomerOrder(null)}
+                className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-3">
+              {isLoadingHistory ? (
+                <div className="py-12 text-center text-slate-400 flex flex-col items-center gap-2">
+                  <RotateCw className="w-6 h-6 animate-spin text-amber-500" />
+                  <span className="text-xs">অর্ডার হিস্ট্রি লোড হচ্ছে...</span>
+                </div>
+              ) : customerHistoryList.length === 0 ? (
+                <div className="py-8 text-center text-slate-500 text-xs">
+                  কোনো অতীত অর্ডার রেকর্ড পাওয়া যায়নি।
+                </div>
+              ) : (
+                customerHistoryList.map((histOrder) => {
+                  const isCurrent = histOrder.id === historyCustomerOrder.id;
+                  const stCfg = STATUS_CONFIG[histOrder.status as OrderStatus] || STATUS_CONFIG.pending;
+
+                  return (
+                    <div
+                      key={histOrder.id}
+                      className={`p-4 rounded-xl border transition-all ${
+                        isCurrent
+                          ? 'bg-slate-900/90 border-indigo-500/50 shadow-md ring-1 ring-indigo-500/20'
+                          : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-sm text-indigo-400">
+                            #{histOrder.id}
+                          </span>
+                          {isCurrent && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                              বর্তমান অর্ডার
+                            </span>
+                          )}
+                          <span className="text-xs text-slate-400 font-mono">
+                            {new Date(histOrder.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            {' '}
+                            {new Date(histOrder.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                          </span>
+                        </div>
+
+                        <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold border ${stCfg.bgBtn}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${stCfg.dot}`} />
+                          <span>{stCfg.label}</span>
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-slate-300 mb-2">
+                        <div className="font-semibold text-slate-400 text-[11px] mb-1">প্রোডাক্ট ও সাইজ:</div>
+                        <div className="space-y-1 bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/80">
+                          {(histOrder.items_json || []).map((it: any, i: number) => (
+                            <div key={i} className="flex items-center justify-between text-[11px]">
+                              <span className="text-slate-200">
+                                {it.name} {it.variation && <strong className="text-indigo-400 font-mono">[{it.variation}]</strong>}
+                              </span>
+                              <span className="font-mono text-slate-400">x{it.quantity} — {(it.price * it.quantity).toLocaleString()} ৳</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-850">
+                        <div className="text-slate-400 truncate max-w-[340px]">
+                          <span className="text-slate-500">ঠিকানা:</span> {histOrder.address}
+                        </div>
+                        <div className="font-mono font-bold text-white tabular-nums text-sm">
+                          {Number(histOrder.total_amount).toLocaleString()} ৳
+                        </div>
+                      </div>
+
+                      {histOrder.status === 'cancelled' && (
+                        <div className="mt-2 text-[11px] text-rose-300 bg-rose-950/30 border border-rose-900/40 p-2 rounded-lg">
+                          <strong>বাতিলের কারণ:</strong> {histOrder.cancel_reason?.reason_text || histOrder.cancel_reason_id || 'কারণ উল্লেখ নেই'}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-800 bg-slate-950/70 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setHistoryCustomerOrder(null)}
+                className="px-4 py-2 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition"
+              >
+                বন্ধ করুন
+              </button>
+            </div>
           </div>
         </div>
       )}
