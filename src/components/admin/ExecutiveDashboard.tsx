@@ -14,6 +14,8 @@ import {
   Truck,
   XCircle,
   Zap,
+  PhoneCall,
+  Activity,
 } from 'lucide-react';
 
 export const ExecutiveDashboard: React.FC = () => {
@@ -259,7 +261,7 @@ export const ExecutiveDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* 6. Meta CAPI Dispatched (অর্ডার ক্রিয়েটেড ডেইট অনুযায়ী) */}
+          {/* 6. Meta CAPI Dispatched */}
           <div className="bg-slate-900 border border-violet-900/60 bg-gradient-to-b from-slate-900 to-violet-950/20 rounded-xl p-3.5 flex flex-col justify-between shadow-xs">
             <div className="flex items-center justify-between text-violet-300 text-xs">
               <span className="font-medium">Meta CAPI Dispatched</span>
@@ -309,7 +311,7 @@ export const ExecutiveDashboard: React.FC = () => {
 
       {/* SECTION 2: Moderator Performance & Cancellation Root Cause */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Moderator Performance */}
+        {/* Moderator Performance Table (পূর্ণাঙ্গ ও নিখুঁত কলামসহ) */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -326,36 +328,47 @@ export const ExecutiveDashboard: React.FC = () => {
               <thead>
                 <tr className="border-b border-slate-800 text-[10px] text-slate-400 uppercase tracking-wider">
                   <th className="py-2.5 px-2">Staff Member</th>
-                  <th className="py-2.5 px-2 text-right">Est. Calls</th>
-                  <th className="py-2.5 px-2 text-right">Approved</th>
-                  <th className="py-2.5 px-2 text-right">Edits</th>
-                  <th className="py-2.5 px-2 text-right">Cancellations</th>
+                  <th className="py-2.5 px-2 text-right" title="মোট কল ও নোট দেওয়ার সংখ্যা">Calls</th>
+                  <th className="py-2.5 px-2 text-right" title="কাস্টমারকে হোল্ডে রাখা হয়েছে">Hold</th>
+                  <th className="py-2.5 px-2 text-right" title="অর্ডার কনফার্ম/অ্যাপ্রুভ করা হয়েছে">Approved</th>
+                  <th className="py-2.5 px-2 text-right" title="ডেলিভারি সম্পন্ন/কমপ্লিট করা হয়েছে">Completed</th>
+                  <th className="py-2.5 px-2 text-right" title="অর্ডার বাতিল করা হয়েছে">Cancelled</th>
+                  <th className="py-2.5 px-2 text-right" title="মডারেটরের মোট সমস্ত অ্যাকশন">Total</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono tabular-nums">
                 {data?.moderatorPerformance && data.moderatorPerformance.length > 0 ? (
-                  data.moderatorPerformance.map(mod => (
-                    <tr key={mod.moderator_id} className="hover:bg-slate-850/50">
-                      <td className="py-2.5 px-2 font-sans font-medium text-slate-200">
-                        {mod.moderator_name}
-                      </td>
-                      <td className="py-2.5 px-2 text-right text-slate-300">
-                        {mod.calls_made}
-                      </td>
-                      <td className="py-2.5 px-2 text-right text-emerald-400 font-semibold">
-                        {mod.confirmations}
-                      </td>
-                      <td className="py-2.5 px-2 text-right text-amber-400">
-                        {mod.edits}
-                      </td>
-                      <td className="py-2.5 px-2 text-right text-red-400">
-                        {mod.cancellations}
-                      </td>
-                    </tr>
-                  ))
+                  data.moderatorPerformance.map(mod => {
+                    const m = mod as any;
+                    return (
+                      <tr key={m.moderator_id} className="hover:bg-slate-850/50 transition-colors">
+                        <td className="py-2.5 px-2 font-sans font-medium text-slate-200">
+                          {m.moderator_name}
+                        </td>
+                        <td className="py-2.5 px-2 text-right text-amber-300 font-semibold">
+                          {m.calls_made ?? 0}
+                        </td>
+                        <td className="py-2.5 px-2 text-right text-indigo-400 font-semibold">
+                          {m.hold ?? 0}
+                        </td>
+                        <td className="py-2.5 px-2 text-right text-emerald-400 font-bold">
+                          {m.approved ?? m.confirmations ?? 0}
+                        </td>
+                        <td className="py-2.5 px-2 text-right text-cyan-400 font-semibold">
+                          {m.completed ?? 0}
+                        </td>
+                        <td className="py-2.5 px-2 text-right text-rose-400 font-semibold">
+                          {m.cancellations ?? 0}
+                        </td>
+                        <td className="py-2.5 px-2 text-right text-slate-400">
+                          {m.total_actions ?? 0}
+                        </td>
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
-                    <td colSpan={5} className="py-6 text-center text-slate-500 font-sans">
+                    <td colSpan={7} className="py-6 text-center text-slate-500 font-sans">
                       No moderator activities recorded in this timeframe.
                     </td>
                   </tr>
