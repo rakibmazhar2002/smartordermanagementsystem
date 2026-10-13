@@ -440,7 +440,7 @@ app.delete('/api/cancel-reasons/:id', authenticate, requireSuperAdmin, (req: Req
   const db = getDb();
 
   const index = db.cancelReasons.findIndex(r => r.id === id);
-  if (!index === -1) {
+  if (index === -1) {
     return res.status(404).json({ error: 'Cancel reason not found' });
   }
 
@@ -899,7 +899,7 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
   return res.json({ success: true, count: updatedCount });
 });
 
-// ANALYTICS DASHBOARD: Meta CAPI (Order Created Date) & বাকি সব (Action/Modified Date)
+// ANALYTICS DASHBOARD: মডারেটরদের লাইভ অ্যাক্টিভিটি ট্র্যাকার (Calls, Hold, Approved, Completed, Cancelled)
 app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: Response) => {
   const db = getDb();
   const range = (req.query.range as string) || 'today';
@@ -991,26 +991,69 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     grossRevenue,
   };
 
-  // ৩। মডারেটর পারফরম্যান্স
+  // ৩। মডারেটর পারফরম্যান্স: Calls, Hold, Approved, Completed, Cancelled সুনির্দিষ্ট কাউন্ট
   const moderators = db.users.filter(u => u.role === 'moderator' || u.role === 'super_admin');
   const moderatorPerformance = moderators.map(mod => {
-    const modLogs = db.activityLogs.filter(l => {
+    const modLogs = (db.activityLogs || []).filter(l => {
       const logTime = new Date(l.timestamp).getTime();
-      return l.user_id === mod.id && logTime >= startMs && logTime <= endMs;
+      const isTimeMatch = !isNaN(logTime) && logTime >= startMs && logTime <= endMs;
+      const isUserMatch = l.user_id === mod.id || (l.user_name && l.user_name.trim().toLowerCase() === mod.name.trim().toLowerCase());
+      return isUserMatch && isTimeMatch;
     });
-    const confirmations = modLogs.filter(l => l.action_type === 'status_change' && l.description.includes('APPROVED')).length;
-    const edits = modLogs.filter(l => l.action_type === 'order_edit' || l.action_type === 'internal_note').length;
-    const cancellations = modLogs.filter(l => l.action_type === 'cancelled').length;
-    const total_actions = modLogs.length;
+
+    // ১. Approved
+    const approvedCount = modLogs.filter(l =>
+      (l.action_type === 'status_change' && (l.description.includes('APPROVED') || l.description.toLowerCase().includes('to approved'))) ||
+      l.description.includes('APPROVED')
+    ).length;
+
+    // ২. Hold
+    const holdCount = modLogs.filter(l =>
+      l.description.includes('HOLD') ||
+      (l.action_type === 'status_change' && l.description.toLowerCase().includes('to hold'))
+    ).length;
+
+    // ৩. Completed (Delivered)
+    const completedCount = modLogs.filter(l =>
+      l.description.includes('COMPLETED') ||
+      (l.action_type === 'status_change' && l.description.toLowerCase().includes('to completed'))
+    ).length;
+
+    // ৪. Cancellations
+    const cancelledCount = modLogs.filter(l =>
+      l.action_type === 'cancelled' ||
+      l.description.toLowerCase().includes('cancelled') ||
+      (l.action_type === 'status_change' && l.description.toLowerCase().includes('to cancelled'))
+    ).length;
+
+    // ৫. Call Notes (ইন্টারনাল নোট / কল রিমার্কস)
+    const callNotesCount = modLogs.filter(l =>
+      l.action_type === 'internal_note' ||
+      l.description.includes('[Call/Internal Note]')
+    ).length;
+
+    // ৬. Edits
+    const editsCount = modLogs.filter(l =>
+      l.action_type === 'order_edit' ||
+      l.description.includes('edited by')
+    ).length;
+
+    // ৭. মোট কল কার্যক্রম (কল নোট + হোল্ড + অ্যাপ্রুভড + ক্যানসেল)
+    const totalCalls = callNotesCount + approvedCount + holdCount + cancelledCount;
+    const totalActions = modLogs.length;
 
     return {
       moderator_id: mod.id,
       moderator_name: mod.name,
-      calls_made: total_actions + Math.floor(confirmations * 1.5),
-      confirmations,
-      edits,
-      cancellations,
-      total_actions,
+      calls_made: totalCalls,
+      call_notes: callNotesCount,
+      approved: approvedCount,
+      confirmations: approvedCount,
+      hold: holdCount,
+      completed: completedCount,
+      cancellations: cancelledCount,
+      edits: editsCount,
+      total_actions: totalActions,
     };
   });
 
