@@ -580,7 +580,7 @@ app.get('/api/orders', authenticate, (req: Request, res: Response) => {
   });
 });
 
-// কাস্টমারের ফোন নম্বর দিয়ে পূর্বের সমস্ত অর্ডার হিস্ট্রি পাওয়ার এন্ডপয়েন্ট
+// কাস্টমারের ফোন নম্বর দিয়ে পূর্বের সমস্ত অর্ডার হিস্ট্রি পাওয়ার এন্ডপয়েন্ট
 app.get('/api/orders/history/by-phone', authenticate, (req: Request, res: Response) => {
   const rawPhone = req.query.phone as string;
   if (!rawPhone || !rawPhone.trim()) {
@@ -899,7 +899,7 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
   return res.json({ success: true, count: updatedCount });
 });
 
-// ANALYTICS DASHBOARD: মডারেটরদের লাইভ অ্যাক্টিভিটি ট্র্যাকার (Calls, Hold, Approved, Completed, Cancelled)
+// ANALYTICS DASHBOARD: TODAY'S PULSE এখন পুরোপুরি Order Created Date (createdAt) অনুযায়ী গণনা
 app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: Response) => {
   const db = getDb();
   const range = (req.query.range as string) || 'today';
@@ -949,34 +949,29 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const startMs = startTime.getTime();
   const endMs = endTime.getTime();
 
-  // ১। META CAPI DISPATCHED: শুধুমাত্র Order Created Date (createdAt) অনুযায়ী গণনা
+  // ১। TODAY'S PULSE: সমস্ত মেট্রিক্স Order Created Date (createdAt) অনুযায়ী গণনা
   const createdOrders = db.orders.filter(o => {
     const t = new Date(o.createdAt).getTime();
     return !isNaN(t) && t >= startMs && t <= endMs;
   });
+
+  const total = createdOrders.length || 1;
+  const pending = createdOrders.filter(o => o.status === 'pending').length;
+  const approved = createdOrders.filter(o => o.status === 'approved').length;
+  const hold = createdOrders.filter(o => o.status === 'hold').length;
+  const completed = createdOrders.filter(o => o.status === 'completed').length;
+  const cancelled = createdOrders.filter(o => o.status === 'cancelled').length;
+
   const metaCapiDispatched = createdOrders.filter(
     o => o.status === 'approved' || o.status === 'completed'
   ).length;
 
-  // ২। বাকি সব মেট্রিক্স: Action / Modified Date (updatedAt) অনুযায়ী গণনা
-  const modifiedOrders = db.orders.filter(o => {
-    const actionTime = new Date(o.updatedAt || o.createdAt).getTime();
-    return !isNaN(actionTime) && actionTime >= startMs && actionTime <= endMs;
-  });
-
-  const total = modifiedOrders.length || 1;
-  const pending = modifiedOrders.filter(o => o.status === 'pending').length;
-  const approved = modifiedOrders.filter(o => o.status === 'approved').length;
-  const hold = modifiedOrders.filter(o => o.status === 'hold').length;
-  const completed = modifiedOrders.filter(o => o.status === 'completed').length;
-  const cancelled = modifiedOrders.filter(o => o.status === 'cancelled').length;
-
-  const grossRevenue = modifiedOrders
+  const grossRevenue = createdOrders
     .filter(o => o.status === 'approved' || o.status === 'completed')
     .reduce((sum, o) => sum + o.total_amount, 0);
 
   const pulse = {
-    total: modifiedOrders.length,
+    total: createdOrders.length,
     pending,
     approved,
     hold,
@@ -991,7 +986,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     grossRevenue,
   };
 
-  // ৩। মডারেটর পারফরম্যান্স: Calls, Hold, Approved, Completed, Cancelled সুনির্দিষ্ট কাউন্ট
+  // ২। মডারেটর পারফরম্যান্স: লাইভ স্টাফ প্রোডাক্টিভিটি (অ্যাকশন লগ যে সময়ে হয়েছে)
   const moderators = db.users.filter(u => u.role === 'moderator' || u.role === 'super_admin');
   const moderatorPerformance = moderators.map(mod => {
     const modLogs = (db.activityLogs || []).filter(l => {
@@ -1026,7 +1021,7 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
       (l.action_type === 'status_change' && l.description.toLowerCase().includes('to cancelled'))
     ).length;
 
-    // ৫. Call Notes (ইন্টারনাল নোট / কল রিমার্কস)
+    // ৫. Call Notes
     const callNotesCount = modLogs.filter(l =>
       l.action_type === 'internal_note' ||
       l.description.includes('[Call/Internal Note]')
@@ -1038,7 +1033,6 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
       l.description.includes('edited by')
     ).length;
 
-    // ৭. মোট কল কার্যক্রম (কল নোট + হোল্ড + অ্যাপ্রুভড + ক্যানসেল)
     const totalCalls = callNotesCount + approvedCount + holdCount + cancelledCount;
     const totalActions = modLogs.length;
 
@@ -1057,8 +1051,8 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
     };
   });
 
-  // ৪। ক্যানসেলেশন রুট-কজ (Others হ্যান্ডলিংসহ)
-  const cancelledOrders = modifiedOrders.filter(o => o.status === 'cancelled');
+  // ৩। ক্যানসেলেশন রুট-কজ (সেই তারিখে তৈরি হওয়া অর্ডারের মধ্যে ক্যানসেল হওয়া অর্ডার)
+  const cancelledOrders = createdOrders.filter(o => o.status === 'cancelled');
   const cancelReasonsMap = new Map(db.cancelReasons.map(r => [r.id, r.reason_text]));
   const reasonCounts: Record<string, number> = {};
 
