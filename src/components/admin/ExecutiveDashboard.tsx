@@ -16,20 +16,34 @@ import {
   Zap,
 } from 'lucide-react';
 
+// বাংলাদেশ সময় অনুযায়ী আজকের তারিখ (YYYY-MM-DD) স্ট্রিং জেনারেটর
+const getBdTodayDateStr = () => {
+  const now = new Date();
+  const bdTime = new Date(now.getTime() + 6 * 60 * 60 * 1000);
+  return bdTime.toISOString().split('T')[0];
+};
+
 export const ExecutiveDashboard: React.FC = () => {
   const [data, setData] = useState<ExecutiveAnalyticsData | null>(null);
   const [selectedRange, setSelectedRange] = useState<string>('today');
-  const [customStart, setCustomStart] = useState<string>('');
-  const [customEnd, setCustomEnd] = useState<string>('');
+  const [customStart, setCustomStart] = useState<string>(getBdTodayDateStr);
+  const [customEnd, setCustomEnd] = useState<string>(getBdTodayDateStr);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchAnalytics = async (range = selectedRange) => {
+  const fetchAnalytics = async (
+    range = selectedRange,
+    startDateOverride?: string,
+    endDateOverride?: string
+  ) => {
     setIsLoading(true);
     try {
+      const sDate = range === 'custom' ? (startDateOverride ?? customStart) : undefined;
+      const eDate = range === 'custom' ? (endDateOverride ?? customEnd) : undefined;
+
       const res = await api.getAnalytics({
         range,
-        startDate: range === 'custom' ? customStart : undefined,
-        endDate: range === 'custom' ? customEnd : undefined,
+        startDate: sDate,
+        endDate: eDate,
       });
       setData(res);
     } catch (err) {
@@ -49,7 +63,7 @@ export const ExecutiveDashboard: React.FC = () => {
 
   const handleApplyCustom = () => {
     if (customStart && customEnd) {
-      fetchAnalytics('custom');
+      fetchAnalytics('custom', customStart, customEnd);
     }
   };
 
@@ -145,7 +159,7 @@ export const ExecutiveDashboard: React.FC = () => {
 
       {/* Custom Range Drawer */}
       {selectedRange === 'custom' && (
-        <div className="flex items-center gap-3 p-3 bg-slate-900/80 border border-slate-800 rounded-lg text-xs">
+        <div className="flex items-center gap-3 p-3 bg-slate-900/80 border border-slate-800 rounded-lg text-xs flex-wrap">
           <Calendar className="w-4 h-4 text-indigo-400" />
           <span className="text-slate-300 font-medium">Select Range:</span>
           <input
