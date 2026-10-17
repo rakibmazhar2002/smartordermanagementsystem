@@ -14,8 +14,6 @@ import {
   Truck,
   XCircle,
   Zap,
-  PhoneCall,
-  Activity,
 } from 'lucide-react';
 
 export const ExecutiveDashboard: React.FC = () => {
@@ -109,7 +107,7 @@ export const ExecutiveDashboard: React.FC = () => {
             <span>Executive Analytics & Moderator Performance</span>
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            Meta CAPI (Order Created Date) · Operations & Moderation (Action Modified Date)
+            Volume & Conversion Health (Order Created Date) · Operations & Moderation (Live Staff Productivity)
           </p>
         </div>
 
@@ -172,20 +170,20 @@ export const ExecutiveDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* SECTION 1: Dynamic Pulse Title - KPI Metric Cards */}
+      {/* SECTION 1: Dynamic Pulse Title - KPI Metric Cards (Order Created Date) */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-300">
             {getRangeLabel()} · Volume & Conversion Health
           </div>
-          <span className="text-[11px] text-slate-500 hidden sm:inline">
-            Meta CAPI matches Order Created Date · Operational Statuses reflect Modified Window
+          <span className="text-[11px] text-teal-400 font-medium hidden sm:inline">
+            ✓ All Pulse metrics reflect Order Created Date
           </span>
         </div>
 
         {/* 7 Metric Cards Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-          {/* 1. Total (Modified Date) */}
+          {/* 1. Total (Order Created Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Total Ingested</span>
@@ -195,11 +193,11 @@ export const ExecutiveDashboard: React.FC = () => {
               <div className="text-2xl font-bold font-mono text-white tabular-nums">
                 {pulse.total}
               </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">Action Modified Date</div>
+              <div className="text-[11px] text-indigo-400 font-medium mt-0.5">Order Created Date</div>
             </div>
           </div>
 
-          {/* 2. Pending (Modified Date) */}
+          {/* 2. Pending (Order Created Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Awaiting Call</span>
@@ -210,12 +208,12 @@ export const ExecutiveDashboard: React.FC = () => {
                 {pulse.pending}
               </div>
               <div className="text-[11px] text-slate-400 mt-0.5">
-                <span className="font-mono tabular-nums">{pulse.pendingPercent}%</span> of total
+                <span className="font-mono tabular-nums">{pulse.pendingPercent}%</span> of created
               </div>
             </div>
           </div>
 
-          {/* 3. Approved (Modified Date) */}
+          {/* 3. Approved (Order Created Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Approved</span>
@@ -225,13 +223,13 @@ export const ExecutiveDashboard: React.FC = () => {
               <div className="text-2xl font-bold font-mono text-emerald-400 tabular-nums">
                 {pulse.approved}
               </div>
-              <div className="text-[11px] text-emerald-500 mt-0.5">
-                <span className="font-mono tabular-nums">{pulse.approvedPercent}%</span> (Action Date)
+              <div className="text-[11px] text-emerald-400 font-medium mt-0.5">
+                <span className="font-mono tabular-nums">{pulse.approvedPercent}%</span> (Created Date)
               </div>
             </div>
           </div>
 
-          {/* 4. On Hold (Modified Date) */}
+          {/* 4. On Hold (Order Created Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>On Hold</span>
@@ -247,7 +245,7 @@ export const ExecutiveDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* 5. Completed (Modified Date) */}
+          {/* 5. Completed (Order Created Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Completed</span>
@@ -275,7 +273,7 @@ export const ExecutiveDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* 7. Cancelled (Modified Date) */}
+          {/* 7. Cancelled (Order Created Date) */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span>Cancelled</span>
@@ -285,7 +283,7 @@ export const ExecutiveDashboard: React.FC = () => {
               <div className="text-2xl font-bold font-mono text-red-400 tabular-nums">
                 {pulse.cancelled}
               </div>
-              <div className="text-[11px] text-red-400/80 mt-0.5">Action Modified Date</div>
+              <div className="text-[11px] text-red-400/80 font-medium mt-0.5">Order Created Date</div>
             </div>
           </div>
         </div>
@@ -297,21 +295,21 @@ export const ExecutiveDashboard: React.FC = () => {
               <DollarSign className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-xs text-slate-400">Confirmed Gross Pipeline Revenue (Action Window)</div>
+              <div className="text-xs text-slate-400">Confirmed Gross Pipeline Revenue (Order Created Window)</div>
               <div className="text-xl font-bold font-mono text-white tabular-nums">
                 {pulse.grossRevenue.toLocaleString()} BDT
               </div>
             </div>
           </div>
           <div className="text-right text-xs text-slate-400 hidden sm:block">
-            <span>Approved & Delivered Orders in this Action Window</span>
+            <span>Approved & Delivered Orders Created in this Window</span>
           </div>
         </div>
       </div>
 
       {/* SECTION 2: Moderator Performance & Cancellation Root Cause */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Moderator Performance Table (পূর্ণাঙ্গ ও নিখুঁত কলামসহ) */}
+        {/* Moderator Performance Table */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -328,12 +326,12 @@ export const ExecutiveDashboard: React.FC = () => {
               <thead>
                 <tr className="border-b border-slate-800 text-[10px] text-slate-400 uppercase tracking-wider">
                   <th className="py-2.5 px-2">Staff Member</th>
-                  <th className="py-2.5 px-2 text-right" title="মোট কল ও নোট দেওয়ার সংখ্যা">Calls</th>
-                  <th className="py-2.5 px-2 text-right" title="কাস্টমারকে হোল্ডে রাখা হয়েছে">Hold</th>
-                  <th className="py-2.5 px-2 text-right" title="অর্ডার কনফার্ম/অ্যাপ্রুভ করা হয়েছে">Approved</th>
-                  <th className="py-2.5 px-2 text-right" title="ডেলিভারি সম্পন্ন/কমপ্লিট করা হয়েছে">Completed</th>
-                  <th className="py-2.5 px-2 text-right" title="অর্ডার বাতিল করা হয়েছে">Cancelled</th>
-                  <th className="py-2.5 px-2 text-right" title="মডারেটরের মোট সমস্ত অ্যাকশন">Total</th>
+                  <th className="py-2.5 px-2 text-right">Calls</th>
+                  <th className="py-2.5 px-2 text-right">Hold</th>
+                  <th className="py-2.5 px-2 text-right">Approved</th>
+                  <th className="py-2.5 px-2 text-right">Completed</th>
+                  <th className="py-2.5 px-2 text-right">Cancelled</th>
+                  <th className="py-2.5 px-2 text-right">Total</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono tabular-nums">
@@ -387,7 +385,7 @@ export const ExecutiveDashboard: React.FC = () => {
                 Cancellation Root-Cause Analysis
               </h2>
             </div>
-            <span className="text-[11px] text-slate-500">Reason Breakdown (Action Date)</span>
+            <span className="text-[11px] text-slate-500">Reason Breakdown (Order Created Date)</span>
           </div>
 
           <div className="space-y-3 pt-1">
@@ -412,7 +410,7 @@ export const ExecutiveDashboard: React.FC = () => {
               ))
             ) : (
               <div className="py-8 text-center text-slate-500 text-xs">
-                No orders have been cancelled in this date window.
+                No orders created in this window have been cancelled.
               </div>
             )}
           </div>
