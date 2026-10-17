@@ -50,6 +50,28 @@ function normalizePhone(raw: string): string {
   return digits;
 }
 
+// যে কোনো ফরম্যাটের অর্ডার ডেটকে নিখুঁতভাবে বাংলাদেশ সময় মিলি-সেকেন্ডে রূপান্তর করার হেল্পার
+function parseOrderDate(dateVal: any): number {
+  if (!dateVal) return NaN;
+  if (dateVal instanceof Date) return dateVal.getTime();
+  const str = String(dateVal).trim();
+  if (/^\d+$/.test(str)) return Number(str);
+
+  // যদি ইতিমধ্যে টাইমজোন বা Z থাকে (যেমন ISO স্ট্রিং)
+  if (/Z$|[+-]\d{2}:\d{2}$/i.test(str)) {
+    const t = new Date(str).getTime();
+    if (!isNaN(t)) return t;
+  }
+
+  // উকমার্সের লোকাল ডেট ফরম্যাট (যেমন "2026-10-17 14:30:00" বা "2026-10-17T14:30:00")
+  const normalized = str.replace(' ', 'T');
+  const withBdTz = normalized.includes('+') ? normalized : `${normalized}+06:00`;
+  const parsed = new Date(withBdTz).getTime();
+  if (!isNaN(parsed)) return parsed;
+
+  return new Date(str).getTime();
+}
+
 // মাস্টার পারসিস্টেন্ট ব্যাকআপ পাথ (গিট রিপোজিটরি ফোল্ডারের বাইরে সুরক্ষিত থাকবে)
 const MASTER_BACKUP_PATH = path.resolve(__dirname, '..', 'soms_master_backup.json');
 const LOCAL_BACKUP_PATH = path.resolve(__dirname, 'soms_master_backup.json');
@@ -899,7 +921,7 @@ app.post('/api/orders/bulk-status', authenticate, async (req: Request, res: Resp
   return res.json({ success: true, count: updatedCount });
 });
 
-// ANALYTICS DASHBOARD: TODAY'S PULSE এখন পুরোপুরি Order Created Date (createdAt) অনুযায়ী গণনা
+// ANALYTICS DASHBOARD: শতভাগ নিখুঁত বাংলাদেশ টাইম লকড (Preset & Custom 100% Synced)
 app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: Response) => {
   const db = getDb();
   const range = (req.query.range as string) || 'today';
@@ -914,8 +936,25 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const m = bdNow.getUTCMonth();
   const d = bdNow.getUTCDate();
 
+  // বাংলাদেশ সময় অনুযায়ী রাত ১২:০০:০০ AM বা রাত ১১:৫৯:৫৯ PM UTC মিলিসেকেন্ড জেনারেটর
   const makeBdUtc = (year: number, month: number, day: number, hours: number, minutes: number, seconds: number, ms: number) => {
     return new Date(Date.UTC(year, month, day, hours, minutes, seconds, ms) - BD_OFFSET_MS);
+  };
+
+  // কাস্টম ডেট পার্সার (YYYY-MM-DD ফরম্যাটকে বাংলাদেশ সময়ের সাথে হুবহু লক করে)
+  const parseCustomDate = (dateStr: string, isEnd: boolean) => {
+    if (!dateStr || !dateStr.trim()) return null;
+    const clean = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr.trim();
+    const parts = clean.split('-').map(Number);
+    if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      const [year, month, day] = parts;
+      if (isEnd) {
+        return makeBdUtc(year, month - 1, day, 23, 59, 59, 999);
+      } else {
+        return makeBdUtc(year, month - 1, day, 0, 0, 0, 0);
+      }
+    }
+    return new Date(dateStr);
   };
 
   let startTime: Date;
@@ -933,14 +972,11 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   } else if (range === 'thismonth') {
     startTime = makeBdUtc(y, m, 1, 0, 0, 0, 0);
     endTime = makeBdUtc(y, m, d, 23, 59, 59, 999);
-  } else if (range === 'custom' && customStart) {
-    startTime = new Date(customStart);
-    if (customEnd) {
-      const endD = new Date(customEnd);
-      endTime = customEnd.includes('T') ? endD : new Date(endD.getFullYear(), endD.getMonth(), endD.getDate(), 23, 59, 59, 999);
-    } else {
-      endTime = now;
-    }
+  } else if (range === 'custom') {
+    const s = parseCustomDate(customStart || '', false);
+    const e = parseCustomDate(customEnd || customStart || '', true);
+    startTime = s || makeBdUtc(y, m, d, 0, 0, 0, 0);
+    endTime = e || makeBdUtc(y, m, d, 23, 59, 59, 999);
   } else {
     startTime = makeBdUtc(y, m, d, 0, 0, 0, 0);
     endTime = makeBdUtc(y, m, d, 23, 59, 59, 999);
@@ -949,9 +985,9 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const startMs = startTime.getTime();
   const endMs = endTime.getTime();
 
-  // ১। TODAY'S PULSE: সমস্ত মেট্রিক্স Order Created Date (createdAt) অনুযায়ী গণনা
+  // ১। TODAY'S PULSE: সমস্ত মেট্রিক্স Order Created Date (createdAt) অনুযায়ী নির্ভুল গণনা
   const createdOrders = db.orders.filter(o => {
-    const t = new Date(o.createdAt).getTime();
+    const t = parseOrderDate(o.createdAt);
     return !isNaN(t) && t >= startMs && t <= endMs;
   });
 
@@ -990,44 +1026,38 @@ app.get('/api/analytics', authenticate, requireSuperAdmin, (req: Request, res: R
   const moderators = db.users.filter(u => u.role === 'moderator' || u.role === 'super_admin');
   const moderatorPerformance = moderators.map(mod => {
     const modLogs = (db.activityLogs || []).filter(l => {
-      const logTime = new Date(l.timestamp).getTime();
+      const logTime = parseOrderDate(l.timestamp);
       const isTimeMatch = !isNaN(logTime) && logTime >= startMs && logTime <= endMs;
       const isUserMatch = l.user_id === mod.id || (l.user_name && l.user_name.trim().toLowerCase() === mod.name.trim().toLowerCase());
       return isUserMatch && isTimeMatch;
     });
 
-    // ১. Approved
     const approvedCount = modLogs.filter(l =>
       (l.action_type === 'status_change' && (l.description.includes('APPROVED') || l.description.toLowerCase().includes('to approved'))) ||
       l.description.includes('APPROVED')
     ).length;
 
-    // ২. Hold
     const holdCount = modLogs.filter(l =>
       l.description.includes('HOLD') ||
       (l.action_type === 'status_change' && l.description.toLowerCase().includes('to hold'))
     ).length;
 
-    // ৩. Completed (Delivered)
     const completedCount = modLogs.filter(l =>
       l.description.includes('COMPLETED') ||
       (l.action_type === 'status_change' && l.description.toLowerCase().includes('to completed'))
     ).length;
 
-    // ৪. Cancellations
     const cancelledCount = modLogs.filter(l =>
       l.action_type === 'cancelled' ||
       l.description.toLowerCase().includes('cancelled') ||
       (l.action_type === 'status_change' && l.description.toLowerCase().includes('to cancelled'))
     ).length;
 
-    // ৫. Call Notes
     const callNotesCount = modLogs.filter(l =>
       l.action_type === 'internal_note' ||
       l.description.includes('[Call/Internal Note]')
     ).length;
 
-    // ৬. Edits
     const editsCount = modLogs.filter(l =>
       l.action_type === 'order_edit' ||
       l.description.includes('edited by')
